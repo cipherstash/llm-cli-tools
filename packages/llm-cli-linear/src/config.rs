@@ -74,13 +74,17 @@ pub fn parse(toml_str: &str) -> Result<Config, ConfigError> {
 }
 
 /// Return the expected config file path.
+///
+/// Uses `$XDG_CONFIG_HOME/llm-cli/config.toml` if set, otherwise
+/// `$HOME/.config/llm-cli/config.toml`.
 pub fn config_path() -> PathBuf {
-    if let Some(config_dir) = dirs::config_dir() {
-        config_dir.join("llm-cli").join("config.toml")
-    } else {
-        // Fallback if XDG_CONFIG_HOME and HOME are both unset.
-        PathBuf::from(".config/llm-cli/config.toml")
-    }
+    let config_dir = std::env::var("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+            PathBuf::from(home).join(".config")
+        });
+    config_dir.join("llm-cli").join("config.toml")
 }
 
 /// Load configuration from the default config file path.
