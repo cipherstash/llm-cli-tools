@@ -69,9 +69,7 @@ pub fn parse(toml_str: &str) -> Result<Config, ConfigError> {
     let api_url = section
         .api_url
         .unwrap_or_else(|| DEFAULT_API_URL.to_string());
-    let op_field = section
-        .op_field
-        .unwrap_or_else(|| "credential".to_string());
+    let op_field = section.op_field.unwrap_or_else(|| "credential".to_string());
 
     Ok(Config {
         api_url,

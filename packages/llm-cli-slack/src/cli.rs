@@ -23,7 +23,11 @@ impl DebugConfig {
                 "compact" => {}
                 "pretty" => config.pretty = true,
                 "curl_cmd" => config.curl_cmd = true,
-                other => return Err(format!("unknown debug mode: '{other}'. Valid modes: compact, pretty, curl_cmd")),
+                other => {
+                    return Err(format!(
+                        "unknown debug mode: '{other}'. Valid modes: compact, pretty, curl_cmd"
+                    ));
+                }
             }
         }
         config.confirm_curl_cmd()?;
@@ -146,8 +150,15 @@ mod tests {
 
     #[test]
     fn messages_send_to_channel() {
-        let cli =
-            parse_args(&["messages", "send", "--channel", "general", "--text", "hello"]).unwrap();
+        let cli = parse_args(&[
+            "messages",
+            "send",
+            "--channel",
+            "general",
+            "--text",
+            "hello",
+        ])
+        .unwrap();
         match cli.command {
             Command::Messages {
                 action:

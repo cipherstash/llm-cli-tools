@@ -56,9 +56,7 @@ pub fn parse(toml_str: &str) -> Result<Config, ConfigError> {
 
     let section = file_config.slack.ok_or(ConfigError::MissingSection)?;
     let op_item_id = section.op_item_id.ok_or(ConfigError::MissingOpItemId)?;
-    let op_field = section
-        .op_field
-        .unwrap_or_else(|| "credential".to_string());
+    let op_field = section.op_field.unwrap_or_else(|| "credential".to_string());
 
     Ok(Config {
         op_item_id,

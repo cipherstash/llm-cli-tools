@@ -87,17 +87,11 @@ fn parse_all(toml_str: &str) -> Result<BTreeMap<String, DiscourseSection>, Confi
 }
 
 /// Resolve a single instance from parsed config, validating required fields.
-fn resolve_instance(
-    name: &str,
-    section: &DiscourseSection,
-) -> Result<InstanceConfig, ConfigError> {
-    let base_url = section
-        .base_url
-        .clone()
-        .ok_or(ConfigError::MissingField {
-            instance: name.to_string(),
-            field: "base_url",
-        })?;
+fn resolve_instance(name: &str, section: &DiscourseSection) -> Result<InstanceConfig, ConfigError> {
+    let base_url = section.base_url.clone().ok_or(ConfigError::MissingField {
+        instance: name.to_string(),
+        field: "base_url",
+    })?;
     let op_item_id = section
         .op_item_id
         .clone()
@@ -282,7 +276,10 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             err,
-            ConfigError::MissingField { field: "base_url", .. }
+            ConfigError::MissingField {
+                field: "base_url",
+                ..
+            }
         ));
     }
 

@@ -110,10 +110,7 @@ impl Client {
                 eprintln!("<<<   {}: {}", name, value.to_str().unwrap_or("<binary>"));
             }
         }
-        let text = response
-            .body_mut()
-            .read_to_string()
-            .unwrap_or_default();
+        let text = response.body_mut().read_to_string().unwrap_or_default();
         if self.is_debug() {
             eprintln!("<<<");
             eprintln!("<<< {}", self.format_body(&text));
@@ -187,11 +184,7 @@ impl Client {
             if i > 0 {
                 url.push('&');
             }
-            url.push_str(&format!(
-                "{}={}",
-                k,
-                urlencoded::encode(v)
-            ));
+            url.push_str(&format!("{}={}", k, urlencoded::encode(v)));
         }
 
         if self.is_debug() {
@@ -287,7 +280,11 @@ impl Client {
         let count_str = limit.to_string();
         let response = self.get(
             "search.messages",
-            &[("query", &query), ("count", &count_str), ("sort", "timestamp")],
+            &[
+                ("query", &query),
+                ("count", &count_str),
+                ("sort", "timestamp"),
+            ],
         )?;
         parse_search_response(&response)
     }
@@ -340,9 +337,7 @@ pub fn parse_send_response(body: &Value) -> Result<SendResult, String> {
         .ok_or("Missing ts in response")?
         .to_string();
 
-    let msg = body
-        .get("message")
-        .ok_or("Missing message in response")?;
+    let msg = body.get("message").ok_or("Missing message in response")?;
 
     let message: Message =
         serde_json::from_value(msg.clone()).map_err(|e| format!("Failed to parse message: {e}"))?;

@@ -24,7 +24,11 @@ impl DebugConfig {
                 "compact" => {}
                 "pretty" => config.pretty = true,
                 "curl_cmd" => config.curl_cmd = true,
-                other => return Err(format!("unknown debug mode: '{other}'. Valid modes: compact, pretty, curl_cmd")),
+                other => {
+                    return Err(format!(
+                        "unknown debug mode: '{other}'. Valid modes: compact, pretty, curl_cmd"
+                    ));
+                }
             }
         }
         config.confirm_curl_cmd()?;
@@ -182,7 +186,12 @@ mod tests {
     #[test]
     fn posts_create_required_fields() {
         let cli = parse_args(&[
-            "posts", "create", "--title", "My Topic", "--category", "general",
+            "posts",
+            "create",
+            "--title",
+            "My Topic",
+            "--category",
+            "general",
         ])
         .unwrap();
         match cli.command {
@@ -205,7 +214,14 @@ mod tests {
     #[test]
     fn posts_create_with_raw() {
         let cli = parse_args(&[
-            "posts", "create", "--title", "T", "--category", "C", "--raw", "Body text",
+            "posts",
+            "create",
+            "--title",
+            "T",
+            "--category",
+            "C",
+            "--raw",
+            "Body text",
         ])
         .unwrap();
         match cli.command {

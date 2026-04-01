@@ -134,10 +134,7 @@ fn default_date_range() -> (String, String) {
     let today_days = now / 86400;
     let yesterday_days = today_days - 1;
 
-    (
-        days_to_date(yesterday_days),
-        days_to_date(today_days),
-    )
+    (days_to_date(yesterday_days), days_to_date(today_days))
 }
 
 /// Convert days since Unix epoch to ISO 8601 date string.

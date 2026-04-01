@@ -142,10 +142,7 @@ impl Client {
                 eprintln!("<<<   {}: {}", name, value.to_str().unwrap_or("<binary>"));
             }
         }
-        let text = response
-            .body_mut()
-            .read_to_string()
-            .unwrap_or_default();
+        let text = response.body_mut().read_to_string().unwrap_or_default();
         if self.is_debug() {
             eprintln!("<<<");
             eprintln!("<<< {}", self.format_body(&text));
@@ -303,16 +300,14 @@ pub fn parse_latest_posts_response(body: &Value) -> Result<LatestPostsResponse, 
 
 /// Parse a topic response from the Discourse API.
 pub fn parse_topic_response(body: &Value) -> Result<TopicResponse, String> {
-    let topic: Topic = serde_json::from_value(
-        serde_json::json!({
-            "id": body.get("id").ok_or("Missing topic id")?,
-            "title": body.get("title").ok_or("Missing topic title")?,
-            "slug": body.get("slug").ok_or("Missing topic slug")?,
-            "category_id": body.get("category_id"),
-            "posts_count": body.get("posts_count").and_then(|v| v.as_u64()).unwrap_or(0),
-            "views": body.get("views").and_then(|v| v.as_u64()).unwrap_or(0),
-        }),
-    )
+    let topic: Topic = serde_json::from_value(serde_json::json!({
+        "id": body.get("id").ok_or("Missing topic id")?,
+        "title": body.get("title").ok_or("Missing topic title")?,
+        "slug": body.get("slug").ok_or("Missing topic slug")?,
+        "category_id": body.get("category_id"),
+        "posts_count": body.get("posts_count").and_then(|v| v.as_u64()).unwrap_or(0),
+        "views": body.get("views").and_then(|v| v.as_u64()).unwrap_or(0),
+    }))
     .map_err(|e| format!("Failed to parse topic: {e}"))?;
 
     let posts = body
