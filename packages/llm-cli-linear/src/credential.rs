@@ -26,7 +26,7 @@ impl std::fmt::Display for CredentialError {
 /// Retrieve an API key from 1Password using the given item ID.
 pub fn get_api_key(op_item_id: &str) -> Result<String, CredentialError> {
     let output = Command::new("op")
-        .args(["item", "get", op_item_id, "--field", "credential"])
+        .args(["item", "get", op_item_id, "--field", "credential", "--reveal"])
         .output()
         .map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
