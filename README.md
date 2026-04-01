@@ -21,6 +21,18 @@ This discovers all binary crates in the workspace and runs `cargo install --path
 
 ## Configuration
 
+### Quick setup
+
+Run the interactive setup wizard to generate your config file:
+
+```sh
+llm-cli init
+```
+
+This detects which `llm-cli-*` tools are installed, provides instructions for creating API keys, and prompts for the required configuration fields.
+
+### Manual setup
+
 All tools read from `~/.config/llm-cli/config.toml` (or `$XDG_CONFIG_HOME/llm-cli/config.toml`).
 
 ```toml
@@ -62,6 +74,35 @@ llm-cli-slack messages dm --user U12345 --text "hey"
 llm-cli-slack messages mentions
 llm-cli-slack summary --channel general
 ```
+
+## Shell completions
+
+`llm-cli completions` generates completions for the dispatcher **and** all installed `llm-cli-*` subcommands in a single script. One file gives you tab-completion for everything.
+
+### Bash
+
+```sh
+llm-cli completions --shell bash > ~/.local/share/bash-completion/completions/llm-cli
+```
+
+### Zsh
+
+```sh
+# Ensure completions directory exists and is in fpath.
+# Add to ~/.zshrc if not already present:
+#   fpath=(~/.zfunc $fpath)
+#   autoload -Uz compinit && compinit
+mkdir -p ~/.zfunc
+llm-cli completions --shell zsh > ~/.zfunc/_llm-cli
+```
+
+### Fish
+
+```sh
+llm-cli completions --shell fish > ~/.config/fish/completions/llm-cli.fish
+```
+
+Re-run after installing new subcommands to pick up their completions.
 
 ## Common flags
 
