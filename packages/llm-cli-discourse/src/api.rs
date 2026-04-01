@@ -62,6 +62,14 @@ pub struct Client {
 }
 
 impl Client {
+    fn agent(&self) -> ureq::Agent {
+        ureq::Agent::new_with_config(
+            ureq::config::Config::builder()
+                .http_status_as_error(false)
+                .build(),
+        )
+    }
+
     fn is_debug(&self) -> bool {
         self.debug.is_some()
     }
@@ -126,33 +134,44 @@ impl Client {
         }
     }
 
+    fn log_response(&self, response: &mut ureq::http::Response<ureq::Body>) -> String {
+        let status = response.status();
+        if self.is_debug() {
+            eprintln!("<<< {status}");
+            for (name, value) in response.headers() {
+                eprintln!("<<<   {}: {}", name, value.to_str().unwrap_or("<binary>"));
+            }
+        }
+        let text = response
+            .body_mut()
+            .read_to_string()
+            .unwrap_or_default();
+        if self.is_debug() {
+            eprintln!("<<<");
+            eprintln!("<<< {}", self.format_body(&text));
+            eprintln!();
+        }
+        text
+    }
+
     fn get(&self, path: &str) -> Result<Value, String> {
         let url = format!("{}{path}", self.base_url);
         self.debug_request("GET", &url, None);
 
-        let mut response = ureq::get(&url)
+        let mut response = self
+            .agent()
+            .get(&url)
             .header("Api-Key", &self.api_key)
             .header("Api-Username", &self.api_username)
             .header("Accept", "application/json")
             .call()
             .map_err(|e| self.debug_error(&e))?;
 
-        if self.is_debug() {
-            eprintln!("<<< {}", response.status());
-            for (name, value) in response.headers() {
-                eprintln!("<<<   {}: {}", name, value.to_str().unwrap_or("<binary>"));
-            }
-        }
+        let status = response.status();
+        let text = self.log_response(&mut response);
 
-        let text = response
-            .body_mut()
-            .read_to_string()
-            .map_err(|e| format!("Failed to read response: {e}"))?;
-
-        if self.is_debug() {
-            eprintln!("<<<");
-            eprintln!("<<< {}", self.format_body(&text));
-            eprintln!();
+        if status.as_u16() >= 400 {
+            return Err(format!("HTTP {status}: {}", &text[..text.len().min(500)]));
         }
         serde_json::from_str(&text).map_err(|e| format!("Failed to parse response JSON: {e}"))
     }
@@ -164,7 +183,9 @@ impl Client {
 
         self.debug_request("POST", &url, Some(&body_str));
 
-        let mut response = ureq::post(&url)
+        let mut response = self
+            .agent()
+            .post(&url)
             .header("Api-Key", &self.api_key)
             .header("Api-Username", &self.api_username)
             .header("Content-Type", "application/json")
@@ -172,22 +193,11 @@ impl Client {
             .send(&body_str)
             .map_err(|e| self.debug_error(&e))?;
 
-        if self.is_debug() {
-            eprintln!("<<< {}", response.status());
-            for (name, value) in response.headers() {
-                eprintln!("<<<   {}: {}", name, value.to_str().unwrap_or("<binary>"));
-            }
-        }
+        let status = response.status();
+        let text = self.log_response(&mut response);
 
-        let text = response
-            .body_mut()
-            .read_to_string()
-            .map_err(|e| format!("Failed to read response: {e}"))?;
-
-        if self.is_debug() {
-            eprintln!("<<<");
-            eprintln!("<<< {}", self.format_body(&text));
-            eprintln!();
+        if status.as_u16() >= 400 {
+            return Err(format!("HTTP {status}: {}", &text[..text.len().min(500)]));
         }
         serde_json::from_str(&text).map_err(|e| format!("Failed to parse response JSON: {e}"))
     }
@@ -196,24 +206,19 @@ impl Client {
         let url = format!("{}{path}", self.base_url);
         self.debug_request("DELETE", &url, None);
 
-        let mut response = ureq::delete(&url)
+        let mut response = self
+            .agent()
+            .delete(&url)
             .header("Api-Key", &self.api_key)
             .header("Api-Username", &self.api_username)
             .call()
             .map_err(|e| self.debug_error(&e))?;
 
-        if self.is_debug() {
-            eprintln!("<<< {}", response.status());
-            for (name, value) in response.headers() {
-                eprintln!("<<<   {}: {}", name, value.to_str().unwrap_or("<binary>"));
-            }
-            let text = response
-                .body_mut()
-                .read_to_string()
-                .unwrap_or_default();
-            eprintln!("<<<");
-            eprintln!("<<< {}", self.format_body(&text));
-            eprintln!();
+        let status = response.status();
+        self.log_response(&mut response);
+
+        if status.as_u16() >= 400 {
+            return Err(format!("HTTP {status}"));
         }
         Ok(())
     }

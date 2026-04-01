@@ -75,6 +75,14 @@ pub struct Client {
 }
 
 impl Client {
+    fn agent(&self) -> ureq::Agent {
+        ureq::Agent::new_with_config(
+            ureq::config::Config::builder()
+                .http_status_as_error(false)
+                .build(),
+        )
+    }
+
     fn debug_error(&self, e: &ureq::Error) -> String {
         if self.is_debug() {
             eprintln!("<<< ERROR: {e}");
@@ -93,6 +101,25 @@ impl Client {
 
     fn is_curl_cmd(&self) -> bool {
         self.debug.as_ref().is_some_and(|d| d.curl_cmd)
+    }
+
+    fn log_response(&self, response: &mut ureq::http::Response<ureq::Body>) -> String {
+        if self.is_debug() {
+            eprintln!("<<< {}", response.status());
+            for (name, value) in response.headers() {
+                eprintln!("<<<   {}: {}", name, value.to_str().unwrap_or("<binary>"));
+            }
+        }
+        let text = response
+            .body_mut()
+            .read_to_string()
+            .unwrap_or_default();
+        if self.is_debug() {
+            eprintln!("<<<");
+            eprintln!("<<< {}", self.format_body(&text));
+            eprintln!();
+        }
+        text
     }
 
     fn format_body(&self, body: &str) -> String {
@@ -132,28 +159,19 @@ impl Client {
             eprintln!();
         }
 
-        let mut response = ureq::post(&url)
+        let mut response = self
+            .agent()
+            .post(&url)
             .header("Authorization", &format!("Bearer {}", self.token))
             .header("Content-Type", "application/json; charset=utf-8")
             .send(&body_str)
             .map_err(|e| self.debug_error(&e))?;
 
-        if self.is_debug() {
-            eprintln!("<<< {}", response.status());
-            for (name, value) in response.headers() {
-                eprintln!("<<<   {}: {}", name, value.to_str().unwrap_or("<binary>"));
-            }
-        }
+        let status = response.status();
+        let text = self.log_response(&mut response);
 
-        let text = response
-            .body_mut()
-            .read_to_string()
-            .map_err(|e| format!("Failed to read response: {e}"))?;
-
-        if self.is_debug() {
-            eprintln!("<<<");
-            eprintln!("<<< {}", self.format_body(&text));
-            eprintln!();
+        if status.as_u16() >= 400 {
+            return Err(format!("HTTP {status}: {}", &text[..text.len().min(500)]));
         }
 
         let parsed: Value =
@@ -192,27 +210,18 @@ impl Client {
             eprintln!();
         }
 
-        let mut response = ureq::get(&url)
+        let mut response = self
+            .agent()
+            .get(&url)
             .header("Authorization", &format!("Bearer {}", self.token))
             .call()
             .map_err(|e| self.debug_error(&e))?;
 
-        if self.is_debug() {
-            eprintln!("<<< {}", response.status());
-            for (name, value) in response.headers() {
-                eprintln!("<<<   {}: {}", name, value.to_str().unwrap_or("<binary>"));
-            }
-        }
+        let status = response.status();
+        let text = self.log_response(&mut response);
 
-        let text = response
-            .body_mut()
-            .read_to_string()
-            .map_err(|e| format!("Failed to read response: {e}"))?;
-
-        if self.is_debug() {
-            eprintln!("<<<");
-            eprintln!("<<< {}", self.format_body(&text));
-            eprintln!();
+        if status.as_u16() >= 400 {
+            return Err(format!("HTTP {status}: {}", &text[..text.len().min(500)]));
         }
 
         let parsed: Value =

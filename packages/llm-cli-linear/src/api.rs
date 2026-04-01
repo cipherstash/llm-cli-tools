@@ -373,7 +373,13 @@ pub fn execute(
         eprintln!();
     }
 
-    let mut response = match ureq::post(&url)
+    let agent = ureq::Agent::new_with_config(
+        ureq::config::Config::builder()
+            .http_status_as_error(false)
+            .build(),
+    );
+    let mut response = match agent
+        .post(&url)
         .header("Authorization", &format!("Bearer {api_key}"))
         .header("Content-Type", "application/json")
         .send(&body)
@@ -388,8 +394,10 @@ pub fn execute(
         }
     };
 
+    let status = response.status();
+
     if debug.is_some() {
-        eprintln!("<<< {}", response.status());
+        eprintln!("<<< {status}");
         for (name, value) in response.headers() {
             eprintln!("<<<   {}: {}", name, value.to_str().unwrap_or("<binary>"));
         }
@@ -404,6 +412,14 @@ pub fn execute(
         eprintln!("<<<");
         eprintln!("<<< {}", format_debug_body(&response_text, pretty));
         eprintln!();
+    }
+
+    // Check HTTP status after logging.
+    if status.as_u16() >= 400 {
+        return Err(format!(
+            "HTTP {status}: {}",
+            response_text.chars().take(500).collect::<String>()
+        ));
     }
 
     let response_body: Value = serde_json::from_str(&response_text)
