@@ -40,6 +40,11 @@ impl DebugConfig {
         if !self.curl_cmd {
             return Ok(());
         }
+        // Skip confirmation when stdin is not a TTY (e.g., invoked by an agent).
+        let is_tty = unsafe { libc::isatty(libc::STDIN_FILENO) != 0 };
+        if !is_tty {
+            return Ok(());
+        }
         eprint!("WARNING: curl_cmd mode will print secrets (API keys) to stderr. Continue? [y/N] ");
         let mut input = String::new();
         std::io::stdin()
