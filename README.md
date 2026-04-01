@@ -130,33 +130,25 @@ docs/
 
 ## Rough edges that impact usablity (via an agent)
 
-### Critical
-
-1. Interactive prompt blocks agents — --debug=curl_cmd triggers a Y/N confirmation via stdin in all three API crates. An agent using this flag will hang indefinitely. Fix: skip the prompt when stdin is not a TTY.
-
-2. Errors go to stderr only — In JSON mode, errors are eprintln!'d as JSON to stderr. An agent capturing stdout gets nothing on failure. Per your own PRINCIPLES.md, errors should be structured JSON to stdout (with non-zero exit code).
-
 ### High
 
-3. No pagination cursors — Linear detects hasNextPage but emits a human-readable truncation message instead of a cursor. Slack returns has_more internally but doesn't expose it. Discourse has no pagination at all. Agents can't page through results.
+1. No pagination cursors — Linear detects hasNextPage but emits a human-readable truncation message instead of a cursor. Slack returns has_more internally but doesn't expose it. Discourse has no pagination at all. Agents can't page through results.
 
-4. Truncation messages aren't machine-parseable — Linear appends a string like "(showing 25 of 100+)" rather than a structured field. Agents need "has_more": true, "cursor": "..." in the JSON envelope.
+2. Truncation messages aren't machine-parseable — Linear appends a string like "(showing 25 of 100+)" rather than a structured field. Agents need "has_more": true, "cursor": "..." in the JSON envelope.
 
 ### Medium
 
-5. Missing output fields — Linear drops assignee, created_at, updated_at, labels. Slack drops reply_count, reactions. Discourse drops tags, like_count. These are high-signal for agent decision-making.
+3. Limited filtering — Linear has --mine, --team, --state but no date range, priority, or label filters. Discourse and Slack list commands have almost no filtering. Agents can't narrow queries to avoid blowing context windows.
 
-6. Limited filtering — Linear has --mine, --team, --state but no date range, priority, or label filters. Discourse and Slack list commands have almost no filtering. Agents can't narrow queries to avoid blowing context windows.
+4. No retry/rate-limit handling — All three crates fail immediately on transient HTTP errors. Slack rate-limits aggressively. A single retry with backoff would prevent many agent workflow failures.
 
-7. No retry/rate-limit handling — All three crates fail immediately on transient HTTP errors. Slack rate-limits aggressively. A single retry with backoff would prevent many agent workflow failures.
-
-8. Single exit code — All errors return exit code 1. Differentiating config (2), auth (3), and API (4) errors would let agents choose recovery strategies without parsing the error body.
+5. Single exit code — All errors return exit code 1. Differentiating config (2), auth (3), and API (4) errors would let agents choose recovery strategies without parsing the error body.
 
 ### Low
 
-9. No --schema flag — PRINCIPLES.md suggests a flag to output JSON Schema of input/output for automated discovery. Not implemented yet.
+6. No --schema flag — PRINCIPLES.md suggests a flag to output JSON Schema of input/output for automated discovery. Not implemented yet.
 
-10. No stdin/--input for complex input — PRINCIPLES.md suggests accepting JSON input via stdin for structured data. Currently all input is via flags.
+7. No stdin/--input for complex input — PRINCIPLES.md suggests accepting JSON input via stdin for structured data. Currently all input is via flags.
 
 #### Implementation notes
 
