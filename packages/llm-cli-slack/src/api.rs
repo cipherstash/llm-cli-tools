@@ -71,21 +71,36 @@ pub struct SummaryResult {
 /// Slack API client.
 pub struct Client {
     pub token: String,
-    pub debug: bool,
+    pub debug: Option<crate::cli::DebugMode>,
 }
 
 impl Client {
+    fn is_debug(&self) -> bool {
+        self.debug.is_some()
+    }
+
+    fn format_body(&self, body: &str) -> String {
+        if self.debug == Some(crate::cli::DebugMode::Pretty) {
+            serde_json::from_str::<Value>(body)
+                .ok()
+                .and_then(|v| serde_json::to_string_pretty(&v).ok())
+                .unwrap_or_else(|| body.to_string())
+        } else {
+            body.to_string()
+        }
+    }
+
     fn post(&self, method: &str, body: &Value) -> Result<Value, String> {
         let url = format!("https://slack.com/api/{method}");
         let body_str =
             serde_json::to_string(body).map_err(|e| format!("Serialization error: {e}"))?;
 
-        if self.debug {
+        if self.is_debug() {
             eprintln!(">>> POST {url}");
             eprintln!(">>> Authorization: Bearer <redacted>");
             eprintln!(">>> Content-Type: application/json; charset=utf-8");
             eprintln!(">>> ");
-            eprintln!(">>> {body_str}");
+            eprintln!(">>> {}", self.format_body(&body_str));
             eprintln!();
         }
 
@@ -95,7 +110,7 @@ impl Client {
             .send(&body_str)
             .map_err(|e| format!("HTTP request failed: {e}"))?;
 
-        if self.debug {
+        if self.is_debug() {
             eprintln!("<<< {}", response.status());
             for (name, value) in response.headers() {
                 eprintln!("<<<   {}: {}", name, value.to_str().unwrap_or("<binary>"));
@@ -107,9 +122,9 @@ impl Client {
             .read_to_string()
             .map_err(|e| format!("Failed to read response: {e}"))?;
 
-        if self.debug {
+        if self.is_debug() {
             eprintln!("<<<");
-            eprintln!("<<< {text}");
+            eprintln!("<<< {}", self.format_body(&text));
             eprintln!();
         }
 
@@ -133,7 +148,7 @@ impl Client {
             ));
         }
 
-        if self.debug {
+        if self.is_debug() {
             eprintln!(">>> GET {url}");
             eprintln!(">>> Authorization: Bearer <redacted>");
             eprintln!();
@@ -144,7 +159,7 @@ impl Client {
             .call()
             .map_err(|e| format!("HTTP request failed: {e}"))?;
 
-        if self.debug {
+        if self.is_debug() {
             eprintln!("<<< {}", response.status());
             for (name, value) in response.headers() {
                 eprintln!("<<<   {}: {}", name, value.to_str().unwrap_or("<binary>"));
@@ -156,9 +171,9 @@ impl Client {
             .read_to_string()
             .map_err(|e| format!("Failed to read response: {e}"))?;
 
-        if self.debug {
+        if self.is_debug() {
             eprintln!("<<<");
-            eprintln!("<<< {text}");
+            eprintln!("<<< {}", self.format_body(&text));
             eprintln!();
         }
 

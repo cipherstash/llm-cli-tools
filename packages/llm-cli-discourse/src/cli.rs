@@ -4,7 +4,16 @@
 //! Global flags: `--human` for human-readable output, `--instance` to
 //! select which Discourse instance to use from config.
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+
+/// Debug output mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum DebugMode {
+    /// Compact single-line output.
+    Compact,
+    /// Pretty-printed JSON bodies.
+    Pretty,
+}
 
 #[derive(Debug, Parser)]
 #[command(
@@ -18,9 +27,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub human: bool,
 
-    /// Print raw HTTP requests and responses (including headers) to stderr.
-    #[arg(long, global = true)]
-    pub debug: bool,
+    /// Print raw HTTP requests and responses to stderr.
+    /// Use --debug for compact output, --debug=pretty for formatted bodies.
+    #[arg(long, global = true, default_missing_value = "compact", num_args = 0..=1)]
+    pub debug: Option<DebugMode>,
 
     /// Which Discourse instance to use (maps to [discourse.<name>] in config).
     /// Required when multiple instances are configured; auto-selected if only one exists.

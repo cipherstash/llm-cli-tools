@@ -299,22 +299,43 @@ pub fn parse_done_state_id(body: &Value) -> Result<(String, String), String> {
     Ok((issue_id, done_state_id))
 }
 
+/// Format a body string for debug output, optionally pretty-printing.
+fn format_debug_body(body: &str, pretty: bool) -> String {
+    if !pretty {
+        return body.to_string();
+    }
+    // Try to parse as JSON and pretty-print. For GraphQL requests,
+    // also unescape the query field so it's readable.
+    if let Ok(mut parsed) = serde_json::from_str::<Value>(body) {
+        // If there's a "query" field with a string value, it's a GraphQL query.
+        // Print it as a raw string block instead of an escaped JSON string.
+        if let Some(query) = parsed.get("query").and_then(|q| q.as_str()) {
+            let query_block = format!("\n--- GraphQL Query ---\n{}\n---------------------", query);
+            parsed["query"] = Value::String(query_block);
+        }
+        serde_json::to_string_pretty(&parsed).unwrap_or_else(|_| body.to_string())
+    } else {
+        body.to_string()
+    }
+}
+
 /// Send a GraphQL request to the Linear API.
 pub fn execute(
     api_url: &str,
     api_key: &str,
     request: &GraphqlRequest,
-    debug: bool,
+    debug: Option<crate::cli::DebugMode>,
 ) -> Result<Value, String> {
     let url = format!("{api_url}/graphql");
     let body = serde_json::to_string(request).map_err(|e| format!("Serialization error: {e}"))?;
+    let pretty = debug == Some(crate::cli::DebugMode::Pretty);
 
-    if debug {
+    if debug.is_some() {
         eprintln!(">>> POST {url}");
         eprintln!(">>> Authorization: Bearer <redacted>");
         eprintln!(">>> Content-Type: application/json");
         eprintln!(">>> ");
-        eprintln!(">>> {body}");
+        eprintln!(">>> {}", format_debug_body(&body, pretty));
         eprintln!();
     }
 
@@ -326,7 +347,7 @@ pub fn execute(
 
     let status = response.status();
 
-    if debug {
+    if debug.is_some() {
         eprintln!("<<< {status}");
         for (name, value) in response.headers() {
             eprintln!("<<<   {}: {}", name, value.to_str().unwrap_or("<binary>"));
@@ -338,9 +359,9 @@ pub fn execute(
         .read_to_string()
         .map_err(|e| format!("Failed to read response: {e}"))?;
 
-    if debug {
+    if debug.is_some() {
         eprintln!("<<<");
-        eprintln!("<<< {response_text}");
+        eprintln!("<<< {}", format_debug_body(&response_text, pretty));
         eprintln!();
     }
 

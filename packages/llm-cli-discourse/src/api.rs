@@ -58,19 +58,38 @@ pub struct Client {
     pub base_url: String,
     pub api_key: String,
     pub api_username: String,
-    pub debug: bool,
+    pub debug: Option<crate::cli::DebugMode>,
 }
 
 impl Client {
+    fn is_debug(&self) -> bool {
+        self.debug.is_some()
+    }
+
+    fn is_pretty(&self) -> bool {
+        self.debug == Some(crate::cli::DebugMode::Pretty)
+    }
+
+    fn format_body(&self, body: &str) -> String {
+        if self.is_pretty() {
+            serde_json::from_str::<Value>(body)
+                .ok()
+                .and_then(|v| serde_json::to_string_pretty(&v).ok())
+                .unwrap_or_else(|| body.to_string())
+        } else {
+            body.to_string()
+        }
+    }
+
     fn debug_request(&self, method: &str, url: &str, body: Option<&str>) {
-        if self.debug {
+        if self.is_debug() {
             eprintln!(">>> {method} {url}");
             eprintln!(">>> Api-Key: <redacted>");
             eprintln!(">>> Api-Username: {}", self.api_username);
             if let Some(b) = body {
                 eprintln!(">>> Content-Type: application/json");
                 eprintln!(">>> ");
-                eprintln!(">>> {b}");
+                eprintln!(">>> {}", self.format_body(b));
             }
             eprintln!();
         }
@@ -87,7 +106,7 @@ impl Client {
             .call()
             .map_err(|e| format!("HTTP request failed: {e}"))?;
 
-        if self.debug {
+        if self.is_debug() {
             eprintln!("<<< {}", response.status());
             for (name, value) in response.headers() {
                 eprintln!("<<<   {}: {}", name, value.to_str().unwrap_or("<binary>"));
@@ -99,9 +118,9 @@ impl Client {
             .read_to_string()
             .map_err(|e| format!("Failed to read response: {e}"))?;
 
-        if self.debug {
+        if self.is_debug() {
             eprintln!("<<<");
-            eprintln!("<<< {text}");
+            eprintln!("<<< {}", self.format_body(&text));
             eprintln!();
         }
         serde_json::from_str(&text).map_err(|e| format!("Failed to parse response JSON: {e}"))
@@ -122,7 +141,7 @@ impl Client {
             .send(&body_str)
             .map_err(|e| format!("HTTP request failed: {e}"))?;
 
-        if self.debug {
+        if self.is_debug() {
             eprintln!("<<< {}", response.status());
             for (name, value) in response.headers() {
                 eprintln!("<<<   {}: {}", name, value.to_str().unwrap_or("<binary>"));
@@ -134,9 +153,9 @@ impl Client {
             .read_to_string()
             .map_err(|e| format!("Failed to read response: {e}"))?;
 
-        if self.debug {
+        if self.is_debug() {
             eprintln!("<<<");
-            eprintln!("<<< {text}");
+            eprintln!("<<< {}", self.format_body(&text));
             eprintln!();
         }
         serde_json::from_str(&text).map_err(|e| format!("Failed to parse response JSON: {e}"))
@@ -152,7 +171,7 @@ impl Client {
             .call()
             .map_err(|e| format!("HTTP request failed: {e}"))?;
 
-        if self.debug {
+        if self.is_debug() {
             eprintln!("<<< {}", response.status());
             for (name, value) in response.headers() {
                 eprintln!("<<<   {}: {}", name, value.to_str().unwrap_or("<binary>"));
@@ -162,7 +181,7 @@ impl Client {
                 .read_to_string()
                 .unwrap_or_default();
             eprintln!("<<<");
-            eprintln!("<<< {text}");
+            eprintln!("<<< {}", self.format_body(&text));
             eprintln!();
         }
         Ok(())
