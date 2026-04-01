@@ -91,7 +91,18 @@ fn api_error_to_cli(msg: String, human: bool) -> output::CliError {
 
 fn run(args: cli::Cli) -> Result<(), output::CliError> {
     let human = args.human;
-    let debug = args.debug;
+    let debug = args
+        .debug
+        .map(|s| cli::DebugConfig::parse(&s))
+        .transpose()
+        .map_err(|e| output::CliError {
+            detail: output::ErrorDetail {
+                code: "INVALID_DEBUG_MODE",
+                message: e,
+                suggestion: "Valid modes: compact, pretty, curl_cmd".to_string(),
+            },
+            human,
+        })?;
 
     // Load config.
     let cfg = config::load().map_err(|e| config_error_to_cli(e, human))?;
@@ -104,7 +115,7 @@ fn run(args: cli::Cli) -> Result<(), output::CliError> {
         cli::Command::Issues { action } => match action {
             cli::IssuesAction::List { limit } => {
                 let request = api::build_list_query(limit);
-                let response = api::execute(&cfg.api_url, &api_key, &request, debug)
+                let response = api::execute(&cfg.api_url, &api_key, &request, debug.as_ref())
                     .map_err(|e| api_error_to_cli(e, human))?;
                 let result = api::parse_list_response(&response, limit)
                     .map_err(|e| api_error_to_cli(e, human))?;
@@ -117,7 +128,7 @@ fn run(args: cli::Cli) -> Result<(), output::CliError> {
             }
             cli::IssuesAction::Get { id } => {
                 let request = api::build_get_query(&id);
-                let response = api::execute(&cfg.api_url, &api_key, &request, debug)
+                let response = api::execute(&cfg.api_url, &api_key, &request, debug.as_ref())
                     .map_err(|e| api_error_to_cli(e, human))?;
                 let issue =
                     api::parse_get_response(&response).map_err(|e| api_error_to_cli(e, human))?;
@@ -136,7 +147,7 @@ fn run(args: cli::Cli) -> Result<(), output::CliError> {
             } => {
                 let request =
                     api::build_create_mutation(&title, &team, description.as_deref(), priority);
-                let response = api::execute(&cfg.api_url, &api_key, &request, debug)
+                let response = api::execute(&cfg.api_url, &api_key, &request, debug.as_ref())
                     .map_err(|e| api_error_to_cli(e, human))?;
                 let issue = api::parse_create_response(&response)
                     .map_err(|e| api_error_to_cli(e, human))?;
@@ -150,7 +161,7 @@ fn run(args: cli::Cli) -> Result<(), output::CliError> {
             cli::IssuesAction::Close { id } => {
                 // Step 1: Fetch the issue's team and find the "Done" state.
                 let team_request = api::build_issue_team_query(&id);
-                let team_response = api::execute(&cfg.api_url, &api_key, &team_request, debug)
+                let team_response = api::execute(&cfg.api_url, &api_key, &team_request, debug.as_ref())
                     .map_err(|e| api_error_to_cli(e, human))?;
                 let (issue_id, done_state_id) = api::parse_done_state_id(&team_response)
                     .map_err(|e| api_error_to_cli(e, human))?;
@@ -158,7 +169,7 @@ fn run(args: cli::Cli) -> Result<(), output::CliError> {
                 // Step 2: Update the issue state to "Done".
                 let close_request = api::build_close_mutation(&issue_id, &done_state_id);
                 let close_response =
-                    api::execute(&cfg.api_url, &api_key, &close_request, debug)
+                    api::execute(&cfg.api_url, &api_key, &close_request, debug.as_ref())
                         .map_err(|e| api_error_to_cli(e, human))?;
                 let issue = api::parse_close_response(&close_response)
                     .map_err(|e| api_error_to_cli(e, human))?;

@@ -71,7 +71,7 @@ pub struct SummaryResult {
 /// Slack API client.
 pub struct Client {
     pub token: String,
-    pub debug: Option<crate::cli::DebugMode>,
+    pub debug: Option<crate::cli::DebugConfig>,
 }
 
 impl Client {
@@ -87,8 +87,16 @@ impl Client {
         self.debug.is_some()
     }
 
+    fn is_pretty(&self) -> bool {
+        self.debug.as_ref().is_some_and(|d| d.pretty)
+    }
+
+    fn is_curl_cmd(&self) -> bool {
+        self.debug.as_ref().is_some_and(|d| d.curl_cmd)
+    }
+
     fn format_body(&self, body: &str) -> String {
-        if self.debug == Some(crate::cli::DebugMode::Pretty) {
+        if self.is_pretty() {
             serde_json::from_str::<Value>(body)
                 .ok()
                 .and_then(|v| serde_json::to_string_pretty(&v).ok())
@@ -104,11 +112,23 @@ impl Client {
             serde_json::to_string(body).map_err(|e| format!("Serialization error: {e}"))?;
 
         if self.is_debug() {
+            let auth_display = if self.is_curl_cmd() {
+                format!("Bearer {}", self.token)
+            } else {
+                "Bearer <redacted>".to_string()
+            };
             eprintln!(">>> POST {url}");
-            eprintln!(">>> Authorization: Bearer <redacted>");
+            eprintln!(">>> Authorization: {auth_display}");
             eprintln!(">>> Content-Type: application/json; charset=utf-8");
             eprintln!(">>> ");
             eprintln!(">>> {}", self.format_body(&body_str));
+            if self.is_curl_cmd() {
+                eprintln!(">>> ");
+                eprintln!(">>> curl -X POST '{url}' \\");
+                eprintln!(">>>   -H 'Authorization: Bearer {}' \\", self.token);
+                eprintln!(">>>   -H 'Content-Type: application/json; charset=utf-8' \\");
+                eprintln!(">>>   -d '{body_str}'");
+            }
             eprintln!();
         }
 
@@ -157,8 +177,18 @@ impl Client {
         }
 
         if self.is_debug() {
+            let auth_display = if self.is_curl_cmd() {
+                format!("Bearer {}", self.token)
+            } else {
+                "Bearer <redacted>".to_string()
+            };
             eprintln!(">>> GET {url}");
-            eprintln!(">>> Authorization: Bearer <redacted>");
+            eprintln!(">>> Authorization: {auth_display}");
+            if self.is_curl_cmd() {
+                eprintln!(">>> ");
+                eprintln!(">>> curl '{url}' \\");
+                eprintln!(">>>   -H 'Authorization: Bearer {}'", self.token);
+            }
             eprintln!();
         }
 

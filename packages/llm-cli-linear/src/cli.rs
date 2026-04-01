@@ -3,15 +3,48 @@
 //! Subcommands: `issues list`, `issues get`, `issues create`, `issues close`.
 //! Global flag: `--human` for human-readable output instead of JSON.
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 
-/// Debug output mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum DebugMode {
-    /// Compact single-line output.
-    Compact,
-    /// Pretty-printed JSON bodies and GraphQL queries.
-    Pretty,
+/// Parsed debug configuration from comma-separated flags.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DebugConfig {
+    pub pretty: bool,
+    pub curl_cmd: bool,
+}
+
+impl DebugConfig {
+    /// Parse a comma-separated debug mode string like "pretty,curl_cmd".
+    pub fn parse(s: &str) -> Result<Self, String> {
+        let mut config = DebugConfig {
+            pretty: false,
+            curl_cmd: false,
+        };
+        for flag in s.split(',') {
+            match flag.trim() {
+                "compact" => {}
+                "pretty" => config.pretty = true,
+                "curl_cmd" => config.curl_cmd = true,
+                other => return Err(format!("unknown debug mode: '{other}'. Valid modes: compact, pretty, curl_cmd")),
+            }
+        }
+        config.confirm_curl_cmd()?;
+        Ok(config)
+    }
+
+    fn confirm_curl_cmd(&self) -> Result<(), String> {
+        if !self.curl_cmd {
+            return Ok(());
+        }
+        eprint!("WARNING: curl_cmd mode will print secrets (API keys) to stderr. Continue? [y/N] ");
+        let mut input = String::new();
+        std::io::stdin()
+            .read_line(&mut input)
+            .map_err(|e| format!("Failed to read input: {e}"))?;
+        if !matches!(input.trim().to_lowercase().as_str(), "y" | "yes") {
+            return Err("Aborted.".to_string());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Parser)]
@@ -27,9 +60,10 @@ pub struct Cli {
     pub human: bool,
 
     /// Print raw HTTP requests and responses to stderr.
-    /// Use --debug for compact output, --debug=pretty for formatted bodies.
+    /// Comma-separated modes: compact (default), pretty, curl_cmd.
+    /// Examples: --debug, --debug=pretty, --debug=pretty,curl_cmd
     #[arg(long, global = true, default_missing_value = "compact", num_args = 0..=1, require_equals = true)]
-    pub debug: Option<DebugMode>,
+    pub debug: Option<String>,
 
     #[command(subcommand)]
     pub command: Command,

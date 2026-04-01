@@ -58,7 +58,7 @@ pub struct Client {
     pub base_url: String,
     pub api_key: String,
     pub api_username: String,
-    pub debug: Option<crate::cli::DebugMode>,
+    pub debug: Option<crate::cli::DebugConfig>,
 }
 
 impl Client {
@@ -67,7 +67,11 @@ impl Client {
     }
 
     fn is_pretty(&self) -> bool {
-        self.debug == Some(crate::cli::DebugMode::Pretty)
+        self.debug.as_ref().is_some_and(|d| d.pretty)
+    }
+
+    fn is_curl_cmd(&self) -> bool {
+        self.debug.as_ref().is_some_and(|d| d.curl_cmd)
     }
 
     fn format_body(&self, body: &str) -> String {
@@ -91,13 +95,32 @@ impl Client {
 
     fn debug_request(&self, method: &str, url: &str, body: Option<&str>) {
         if self.is_debug() {
+            let key_display = if self.is_curl_cmd() {
+                self.api_key.as_str()
+            } else {
+                "<redacted>"
+            };
             eprintln!(">>> {method} {url}");
-            eprintln!(">>> Api-Key: <redacted>");
+            eprintln!(">>> Api-Key: {key_display}");
             eprintln!(">>> Api-Username: {}", self.api_username);
             if let Some(b) = body {
                 eprintln!(">>> Content-Type: application/json");
                 eprintln!(">>> ");
                 eprintln!(">>> {}", self.format_body(b));
+            }
+            if self.is_curl_cmd() {
+                eprintln!(">>> ");
+                let mut curl = format!(">>> curl -X {method} '{url}'");
+                curl.push_str(&format!(" \\\n>>>   -H 'Api-Key: {}'", self.api_key));
+                curl.push_str(&format!(
+                    " \\\n>>>   -H 'Api-Username: {}'",
+                    self.api_username
+                ));
+                if let Some(b) = body {
+                    curl.push_str(" \\\n>>>   -H 'Content-Type: application/json'");
+                    curl.push_str(&format!(" \\\n>>>   -d '{b}'"));
+                }
+                eprintln!("{curl}");
             }
             eprintln!();
         }

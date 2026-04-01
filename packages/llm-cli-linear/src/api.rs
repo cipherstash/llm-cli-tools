@@ -345,18 +345,31 @@ pub fn execute(
     api_url: &str,
     api_key: &str,
     request: &GraphqlRequest,
-    debug: Option<crate::cli::DebugMode>,
+    debug: Option<&crate::cli::DebugConfig>,
 ) -> Result<Value, String> {
     let url = format!("{api_url}/graphql");
     let body = serde_json::to_string(request).map_err(|e| format!("Serialization error: {e}"))?;
-    let pretty = debug == Some(crate::cli::DebugMode::Pretty);
+    let pretty = debug.is_some_and(|d| d.pretty);
+    let curl_cmd = debug.is_some_and(|d| d.curl_cmd);
 
     if debug.is_some() {
+        let auth_display = if curl_cmd {
+            format!("Bearer {api_key}")
+        } else {
+            "Bearer <redacted>".to_string()
+        };
         eprintln!(">>> POST {url}");
-        eprintln!(">>> Authorization: Bearer <redacted>");
+        eprintln!(">>> Authorization: {auth_display}");
         eprintln!(">>> Content-Type: application/json");
         eprintln!(">>> ");
         eprintln!(">>> {}", format_debug_body(&body, pretty));
+        if curl_cmd {
+            eprintln!(">>> ");
+            eprintln!(">>> curl -X POST '{url}' \\");
+            eprintln!(">>>   -H 'Authorization: Bearer {api_key}' \\");
+            eprintln!(">>>   -H 'Content-Type: application/json' \\");
+            eprintln!(">>>   -d '{body}'");
+        }
         eprintln!();
     }
 

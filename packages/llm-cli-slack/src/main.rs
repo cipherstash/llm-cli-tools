@@ -158,7 +158,18 @@ fn days_to_date(days: i64) -> String {
 
 fn run(args: cli::Cli) -> Result<(), output::CliError> {
     let human = args.human;
-    let debug = args.debug;
+    let debug = args
+        .debug
+        .map(|s| cli::DebugConfig::parse(&s))
+        .transpose()
+        .map_err(|e| output::CliError {
+            detail: output::ErrorDetail {
+                code: "INVALID_DEBUG_MODE",
+                message: e,
+                suggestion: "Valid modes: compact, pretty, curl_cmd".to_string(),
+            },
+            human,
+        })?;
 
     let cfg = config::load().map_err(|e| config_error_to_cli(e, human))?;
 
