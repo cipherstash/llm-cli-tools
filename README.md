@@ -130,55 +130,16 @@ docs/
 
 ## Rough edges that impact usablity (via an agent)
 
-### High
-
-1. No pagination cursors — Linear detects hasNextPage but emits a human-readable truncation message instead of a cursor. Slack returns has_more internally but doesn't expose it. Discourse has no pagination at all. Agents can't page through results.
-
-2. Truncation messages aren't machine-parseable — Linear appends a string like "(showing 25 of 100+)" rather than a structured field. Agents need "has_more": true, "cursor": "..." in the JSON envelope.
-
 ### Medium
 
-3. Limited filtering — Linear has --mine, --team, --state but no date range, priority, or label filters. Discourse and Slack list commands have almost no filtering. Agents can't narrow queries to avoid blowing context windows.
+1. Limited filtering — Linear has --mine, --team, --state but no date range, priority, or label filters. Discourse and Slack list commands have almost no filtering. Agents can't narrow queries to avoid blowing context windows.
 
-4. No retry/rate-limit handling — All three crates fail immediately on transient HTTP errors. Slack rate-limits aggressively. A single retry with backoff would prevent many agent workflow failures.
+2. No retry/rate-limit handling — All three crates fail immediately on transient HTTP errors. Slack rate-limits aggressively. A single retry with backoff would prevent many agent workflow failures.
 
-5. Single exit code — All errors return exit code 1. Differentiating config (2), auth (3), and API (4) errors would let agents choose recovery strategies without parsing the error body.
+3. Single exit code — All errors return exit code 1. Differentiating config (2), auth (3), and API (4) errors would let agents choose recovery strategies without parsing the error body.
 
 ### Low
 
-6. No --schema flag — PRINCIPLES.md suggests a flag to output JSON Schema of input/output for automated discovery. Not implemented yet.
+4. No --schema flag — PRINCIPLES.md suggests a flag to output JSON Schema of input/output for automated discovery. Not implemented yet.
 
-7. No stdin/--input for complex input — PRINCIPLES.md suggests accepting JSON input via stdin for structured data. Currently all input is via flags.
-
-#### Implementation notes
-
-**Pagination** — Add a `--cursor` flag to list commands. When more results exist, include a structured `pagination` object in the JSON envelope alongside `data`:
-
-```json
-{
-  "success": true,
-  "data": { "issues": [...] },
-  "pagination": {
-    "has_more": true,
-    "next_cursor": "WyIyMDI2LTA0LTAxIl0"
-  }
-}
-```
-
-The agent passes `--cursor <value>` on the next call. Per-crate mapping:
-- **Linear**: Request `endCursor` in the GraphQL `pageInfo`, pass as `after:` variable
-- **Slack**: Forward `response_metadata.next_cursor`, pass as `cursor` query param
-- **Discourse**: Map to `?page=N` (cursor is the page number)
-
-The `pagination` object lives alongside `data` in the `format_success` envelope, not inside the data. This keeps the data shape stable.
-
-**Truncation messages** — Keep the human-readable `message` field (useful for `--human` mode, harmless in JSON) but add the structured `pagination` object as the machine-parseable replacement. Both can coexist.
-
-**Missing output fields** — Add fields to existing API structs. Since the JSON schema is append-only (per PRINCIPLES.md), this is non-breaking. Specifically:
-- **Linear Issue**: `assignee { name, email }`, `createdAt`, `updatedAt`, `labels { nodes { name } }`, `team { key, name }`
-- **Slack Message**: `reply_count`, `reactions [{ name, count }]`, `edited.ts`
-- **Discourse Post/Topic**: `like_count`, `reply_count`, `tags`, `last_posted_at`, `category_name`
-
-Linear requires adding fields to the GraphQL selection set. Slack and Discourse just need struct fields added with `#[serde(default)]` since the upstream REST APIs already return them.
-
-**Implementation order**: Missing output fields first (smallest diff, biggest signal gain), then pagination (Linear first — GraphQL cursor pagination is cleanest), then deprecate the human truncation messages.
+5. No stdin/--input for complex input — PRINCIPLES.md suggests accepting JSON input via stdin for structured data. Currently all input is via flags.
