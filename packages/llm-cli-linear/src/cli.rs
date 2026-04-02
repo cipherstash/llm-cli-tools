@@ -111,6 +111,9 @@ pub enum IssuesAction {
         /// Filter by workflow state name (e.g., "In Progress", "Todo").
         #[arg(long)]
         state: Option<String>,
+        /// Pagination cursor from a previous response. Pass the `next_cursor` value to fetch the next page.
+        #[arg(long)]
+        cursor: Option<String>,
     },
     /// Fetch a single issue by identifier.
     Get {
@@ -204,6 +207,32 @@ mod tests {
                 assert!(mine);
                 assert_eq!(team.as_deref(), Some("ENG"));
                 assert_eq!(state.as_deref(), Some("In Progress"));
+            }
+            _ => panic!("Expected issues list"),
+        }
+    }
+
+    #[test]
+    fn issues_list_with_cursor() {
+        let cli = parse_args(&["issues", "list", "--cursor", "abc123"]).unwrap();
+        match cli.command {
+            Command::Issues {
+                action: IssuesAction::List { cursor, .. },
+            } => {
+                assert_eq!(cursor.as_deref(), Some("abc123"));
+            }
+            _ => panic!("Expected issues list"),
+        }
+    }
+
+    #[test]
+    fn issues_list_without_cursor() {
+        let cli = parse_args(&["issues", "list"]).unwrap();
+        match cli.command {
+            Command::Issues {
+                action: IssuesAction::List { cursor, .. },
+            } => {
+                assert!(cursor.is_none());
             }
             _ => panic!("Expected issues list"),
         }

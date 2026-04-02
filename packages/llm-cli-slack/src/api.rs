@@ -40,6 +40,8 @@ pub struct HistoryResult {
     pub has_more: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    #[serde(skip)]
+    pub next_cursor: Option<String>,
 }
 
 /// Result from searching messages.
@@ -267,12 +269,19 @@ impl Client {
     }
 
     /// Read recent messages from a channel.
-    pub fn read_history(&self, channel: &str, limit: u32) -> Result<HistoryResult, String> {
+    pub fn read_history(
+        &self,
+        channel: &str,
+        limit: u32,
+        cursor: Option<&str>,
+    ) -> Result<HistoryResult, String> {
         let limit_str = limit.to_string();
-        let response = self.get(
-            "conversations.history",
-            &[("channel", channel), ("limit", &limit_str)],
-        )?;
+        let cursor_str = cursor.unwrap_or_default().to_string();
+        let mut params = vec![("channel", channel), ("limit", &limit_str)];
+        if cursor.is_some() {
+            params.push(("cursor", &cursor_str));
+        }
+        let response = self.get("conversations.history", &params)?;
         parse_history_response(&response, limit)
     }
 
@@ -389,6 +398,12 @@ pub fn parse_history_response(body: &Value, limit: u32) -> Result<HistoryResult,
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
+    let next_cursor = body
+        .pointer("/response_metadata/next_cursor")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
     let message = if has_more {
         Some(format!(
             "Results truncated to {limit}. Use --limit to fetch more."
@@ -401,6 +416,7 @@ pub fn parse_history_response(body: &Value, limit: u32) -> Result<HistoryResult,
         messages,
         has_more,
         message,
+        next_cursor: if has_more { next_cursor } else { None },
     })
 }
 
@@ -581,6 +597,54 @@ mod tests {
         assert_eq!(urlencoded::encode("hello world"), "hello+world");
         assert_eq!(urlencoded::encode("<@U123>"), "%3C%40U123%3E");
         assert_eq!(urlencoded::encode("plain"), "plain");
+    }
+
+    // ---- Pagination tests ----
+
+    #[test]
+    fn parse_history_response_extracts_next_cursor() {
+        let body = serde_json::json!({
+            "ok": true,
+            "messages": [
+                { "ts": "1.0", "user": "U1", "text": "hello" }
+            ],
+            "has_more": true,
+            "response_metadata": {
+                "next_cursor": "dXNlcjpVMDYxTkZUVDI="
+            }
+        });
+        let result = parse_history_response(&body, 25).unwrap();
+        assert!(result.has_more);
+        assert_eq!(result.next_cursor.as_deref(), Some("dXNlcjpVMDYxTkZUVDI="));
+    }
+
+    #[test]
+    fn parse_history_response_no_cursor_when_no_more() {
+        let body = serde_json::json!({
+            "ok": true,
+            "messages": [
+                { "ts": "1.0", "user": "U1", "text": "hello" }
+            ],
+            "has_more": false
+        });
+        let result = parse_history_response(&body, 25).unwrap();
+        assert!(!result.has_more);
+        assert!(result.next_cursor.is_none());
+    }
+
+    #[test]
+    fn parse_history_response_next_cursor_skipped_in_serialization() {
+        let body = serde_json::json!({
+            "ok": true,
+            "messages": [],
+            "has_more": true,
+            "response_metadata": {
+                "next_cursor": "abc123"
+            }
+        });
+        let result = parse_history_response(&body, 25).unwrap();
+        let serialized = serde_json::to_value(&result).unwrap();
+        assert!(serialized.get("next_cursor").is_none());
     }
 
     // ---- New field tests ----

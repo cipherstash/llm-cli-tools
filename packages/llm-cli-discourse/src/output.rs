@@ -50,6 +50,29 @@ impl CliError {
     }
 }
 
+/// Pagination metadata for list responses.
+#[derive(Debug, Serialize)]
+pub struct Pagination {
+    pub has_more: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+}
+
+/// Format a success response with optional pagination metadata as JSON.
+pub fn format_success_with_pagination<T: Serialize>(
+    data: &T,
+    pagination: Option<&Pagination>,
+) -> String {
+    let mut wrapper = serde_json::json!({
+        "success": true,
+        "data": data,
+    });
+    if let Some(p) = pagination {
+        wrapper["pagination"] = serde_json::to_value(p).unwrap();
+    }
+    serde_json::to_string_pretty(&wrapper).expect("serialization should not fail")
+}
+
 /// Format a success response as JSON.
 pub fn format_success<T: Serialize>(data: &T) -> String {
     let wrapper = serde_json::json!({
@@ -222,6 +245,8 @@ mod tests {
                     score: None,
                 },
             ],
+            has_more: false,
+            next_page: None,
         };
         let output = format_latest_posts_human(&response);
         assert!(output.contains("Welcome"));
@@ -233,7 +258,11 @@ mod tests {
 
     #[test]
     fn format_latest_posts_human_empty() {
-        let response = LatestPostsResponse { posts: vec![] };
+        let response = LatestPostsResponse {
+            posts: vec![],
+            has_more: false,
+            next_page: None,
+        };
         let output = format_latest_posts_human(&response);
         assert!(output.contains("No posts found"));
     }
@@ -360,6 +389,42 @@ mod tests {
         assert!(stdout_str.is_empty(), "Human errors should not go to stdout");
         assert!(stderr_str.contains("something broke"));
         assert!(stderr_str.contains("try again"));
+    }
+
+    #[test]
+    fn format_success_with_pagination_includes_pagination_object() {
+        let data = serde_json::json!({"posts": []});
+        let pagination = Pagination {
+            has_more: true,
+            next_cursor: Some("1".to_string()),
+        };
+        let output = format_success_with_pagination(&data, Some(&pagination));
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(parsed["success"], true);
+        assert_eq!(parsed["pagination"]["has_more"], true);
+        assert_eq!(parsed["pagination"]["next_cursor"], "1");
+    }
+
+    #[test]
+    fn format_success_with_pagination_omits_pagination_when_none() {
+        let data = serde_json::json!({"posts": []});
+        let output = format_success_with_pagination(&data, None);
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(parsed["success"], true);
+        assert!(parsed.get("pagination").is_none());
+    }
+
+    #[test]
+    fn format_success_with_pagination_omits_cursor_when_none() {
+        let data = serde_json::json!({"posts": []});
+        let pagination = Pagination {
+            has_more: false,
+            next_cursor: None,
+        };
+        let output = format_success_with_pagination(&data, Some(&pagination));
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(parsed["pagination"]["has_more"], false);
+        assert!(parsed["pagination"].get("next_cursor").is_none());
     }
 
     #[test]
@@ -494,6 +559,8 @@ mod tests {
                 reply_count: 4,
                 score: None,
             }],
+            has_more: false,
+            next_page: None,
         };
         let output = format_latest_posts_human(&response);
         assert!(output.contains("10"), "Expected like_count in summary");

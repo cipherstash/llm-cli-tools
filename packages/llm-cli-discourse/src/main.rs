@@ -153,14 +153,25 @@ fn run(args: cli::Cli) -> Result<(), output::CliError> {
 
     let out = match args.command {
         cli::Command::Posts { action } => match action {
-            cli::PostsAction::Latest => {
+            cli::PostsAction::Latest { page } => {
                 let response = client
-                    .list_latest_posts()
+                    .list_latest_posts(page)
                     .map_err(|e| api_error_to_cli(e, human))?;
                 if human {
                     output::format_latest_posts_human(&response)
                 } else {
-                    format!("{}\n", output::format_success(&response))
+                    let pagination = if response.has_more {
+                        Some(output::Pagination {
+                            has_more: true,
+                            next_cursor: response.next_page.map(|p| p.to_string()),
+                        })
+                    } else {
+                        None
+                    };
+                    format!(
+                        "{}\n",
+                        output::format_success_with_pagination(&response, pagination.as_ref())
+                    )
                 }
             }
             cli::PostsAction::Get { id } => {

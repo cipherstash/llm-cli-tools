@@ -125,6 +125,7 @@ fn run(args: cli::Cli) -> Result<(), output::CliError> {
                 mine,
                 team,
                 state,
+                cursor,
             } => {
                 let mut filters = api::IssueFilters {
                     team_key: team,
@@ -142,7 +143,7 @@ fn run(args: cli::Cli) -> Result<(), output::CliError> {
                     filters.assignee_id = Some(viewer_id);
                 }
 
-                let request = api::build_list_query(limit, &filters);
+                let request = api::build_list_query(limit, &filters, cursor.as_deref());
                 let response = api::execute(&cfg.api_url, &api_key, &request, debug.as_ref())
                     .map_err(|e| api_error_to_cli(e, human))?;
                 let result = api::parse_list_response(&response, limit)
@@ -151,7 +152,18 @@ fn run(args: cli::Cli) -> Result<(), output::CliError> {
                 if human {
                     output::format_issue_list_human(&result)
                 } else {
-                    format!("{}\n", output::format_success(&result))
+                    let pagination = if result.has_more {
+                        Some(output::Pagination {
+                            has_more: true,
+                            next_cursor: result.next_cursor.clone(),
+                        })
+                    } else {
+                        None
+                    };
+                    format!(
+                        "{}\n",
+                        output::format_success_with_pagination(&result, pagination.as_ref())
+                    )
                 }
             }
             cli::IssuesAction::Get { id } => {

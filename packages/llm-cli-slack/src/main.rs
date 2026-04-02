@@ -199,14 +199,29 @@ fn run(args: cli::Cli) -> Result<(), output::CliError> {
                     format!("{}\n", output::format_success(&result))
                 }
             }
-            cli::MessagesAction::Read { channel, limit } => {
+            cli::MessagesAction::Read {
+                channel,
+                limit,
+                cursor,
+            } => {
                 let result = client
-                    .read_history(&channel, limit)
+                    .read_history(&channel, limit, cursor.as_deref())
                     .map_err(|e| api_error_to_cli(e, human))?;
                 if human {
                     output::format_history_human(&result)
                 } else {
-                    format!("{}\n", output::format_success(&result))
+                    let pagination = if result.has_more {
+                        Some(output::Pagination {
+                            has_more: true,
+                            next_cursor: result.next_cursor.clone(),
+                        })
+                    } else {
+                        None
+                    };
+                    format!(
+                        "{}\n",
+                        output::format_success_with_pagination(&result, pagination.as_ref())
+                    )
                 }
             }
             cli::MessagesAction::Dm { user, text } => {

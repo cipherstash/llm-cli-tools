@@ -50,12 +50,35 @@ impl CliError {
     }
 }
 
+/// Pagination metadata for list responses.
+#[derive(Debug, Serialize)]
+pub struct Pagination {
+    pub has_more: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+}
+
 /// Format a success response as JSON.
 pub fn format_success<T: Serialize>(data: &T) -> String {
     let wrapper = serde_json::json!({
         "success": true,
         "data": data,
     });
+    serde_json::to_string_pretty(&wrapper).expect("serialization should not fail")
+}
+
+/// Format a success response with optional pagination metadata as JSON.
+pub fn format_success_with_pagination<T: Serialize>(
+    data: &T,
+    pagination: Option<&Pagination>,
+) -> String {
+    let mut wrapper = serde_json::json!({
+        "success": true,
+        "data": data,
+    });
+    if let Some(p) = pagination {
+        wrapper["pagination"] = serde_json::to_value(p).unwrap();
+    }
     serde_json::to_string_pretty(&wrapper).expect("serialization should not fail")
 }
 
@@ -229,8 +252,9 @@ mod tests {
     fn format_issue_list_human_empty() {
         let result = IssueListResult {
             issues: vec![],
-            total_count: None,
             message: None,
+            has_more: false,
+            next_cursor: None,
         };
         let output = format_issue_list_human(&result);
         assert!(output.contains("No issues found"));
@@ -253,8 +277,9 @@ mod tests {
                 created_at: None,
                 updated_at: None,
             }],
-            total_count: None,
             message: Some("Results truncated to 25.".to_string()),
+            has_more: true,
+            next_cursor: None,
         };
         let output = format_issue_list_human(&result);
         assert!(output.contains("PROJ-1"));
@@ -414,6 +439,42 @@ mod tests {
         };
         let output = format_issue_human(&issue);
         assert!(!output.contains("Labels"), "Should not show Labels line when empty");
+    }
+
+    #[test]
+    fn format_success_with_pagination_includes_pagination_object() {
+        let data = serde_json::json!({"issues": []});
+        let pagination = Pagination {
+            has_more: true,
+            next_cursor: Some("abc123".to_string()),
+        };
+        let output = format_success_with_pagination(&data, Some(&pagination));
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(parsed["success"], true);
+        assert_eq!(parsed["pagination"]["has_more"], true);
+        assert_eq!(parsed["pagination"]["next_cursor"], "abc123");
+    }
+
+    #[test]
+    fn format_success_with_pagination_omits_pagination_when_none() {
+        let data = serde_json::json!({"issues": []});
+        let output = format_success_with_pagination(&data, None);
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(parsed["success"], true);
+        assert!(parsed.get("pagination").is_none());
+    }
+
+    #[test]
+    fn format_success_with_pagination_omits_cursor_when_none() {
+        let data = serde_json::json!({"issues": []});
+        let pagination = Pagination {
+            has_more: false,
+            next_cursor: None,
+        };
+        let output = format_success_with_pagination(&data, Some(&pagination));
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(parsed["pagination"]["has_more"], false);
+        assert!(parsed["pagination"].get("next_cursor").is_none());
     }
 
     #[test]

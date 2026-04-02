@@ -108,7 +108,11 @@ pub enum Command {
 #[derive(Debug, Subcommand)]
 pub enum PostsAction {
     /// List the latest posts across all topics.
-    Latest,
+    Latest {
+        /// Page number for pagination (starts at 0).
+        #[arg(long)]
+        page: Option<u32>,
+    },
     /// Fetch a single post/topic by ID.
     Get {
         /// The topic ID.
@@ -174,9 +178,35 @@ mod tests {
         assert!(matches!(
             cli.command,
             Command::Posts {
-                action: PostsAction::Latest,
+                action: PostsAction::Latest { .. },
             }
         ));
+    }
+
+    #[test]
+    fn posts_latest_with_page() {
+        let cli = parse_args(&["posts", "latest", "--page", "2"]).unwrap();
+        match cli.command {
+            Command::Posts {
+                action: PostsAction::Latest { page },
+            } => {
+                assert_eq!(page, Some(2));
+            }
+            _ => panic!("Expected posts latest"),
+        }
+    }
+
+    #[test]
+    fn posts_latest_without_page() {
+        let cli = parse_args(&["posts", "latest"]).unwrap();
+        match cli.command {
+            Command::Posts {
+                action: PostsAction::Latest { page },
+            } => {
+                assert!(page.is_none());
+            }
+            _ => panic!("Expected posts latest"),
+        }
     }
 
     #[test]

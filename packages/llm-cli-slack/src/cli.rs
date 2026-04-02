@@ -129,6 +129,9 @@ pub enum MessagesAction {
         /// Maximum number of messages to return (default: 25).
         #[arg(long, default_value = "25")]
         limit: u32,
+        /// Pagination cursor from a previous response. Pass the `next_cursor` value to fetch the next page.
+        #[arg(long)]
+        cursor: Option<String>,
     },
     /// Send a direct message to a user.
     Dm {
@@ -219,7 +222,10 @@ mod tests {
         let cli = parse_args(&["messages", "read", "--channel", "general"]).unwrap();
         match cli.command {
             Command::Messages {
-                action: MessagesAction::Read { channel, limit },
+                action:
+                    MessagesAction::Read {
+                        channel, limit, ..
+                    },
             } => {
                 assert_eq!(channel, "general");
                 assert_eq!(limit, 25);
@@ -236,6 +242,40 @@ mod tests {
             Command::Messages {
                 action: MessagesAction::Read { limit, .. },
             } => assert_eq!(limit, 10),
+            _ => panic!("Expected messages read"),
+        }
+    }
+
+    #[test]
+    fn messages_read_with_cursor() {
+        let cli = parse_args(&[
+            "messages",
+            "read",
+            "--channel",
+            "general",
+            "--cursor",
+            "next_abc",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Messages {
+                action: MessagesAction::Read { cursor, .. },
+            } => {
+                assert_eq!(cursor.as_deref(), Some("next_abc"));
+            }
+            _ => panic!("Expected messages read"),
+        }
+    }
+
+    #[test]
+    fn messages_read_without_cursor() {
+        let cli = parse_args(&["messages", "read", "--channel", "general"]).unwrap();
+        match cli.command {
+            Command::Messages {
+                action: MessagesAction::Read { cursor, .. },
+            } => {
+                assert!(cursor.is_none());
+            }
             _ => panic!("Expected messages read"),
         }
     }

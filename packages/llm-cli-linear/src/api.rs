@@ -66,9 +66,12 @@ pub struct LabelsConnection {
 #[derive(Debug, Serialize)]
 pub struct IssueListResult {
     pub issues: Vec<Issue>,
-    pub total_count: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    #[serde(skip)]
+    pub has_more: bool,
+    #[serde(skip)]
+    pub next_cursor: Option<String>,
 }
 
 /// A GraphQL request body.
@@ -87,10 +90,14 @@ pub struct IssueFilters {
     pub state_name: Option<String>,
 }
 
-/// Build the GraphQL query for listing issues with optional filters.
-pub fn build_list_query(limit: u32, filters: &IssueFilters) -> GraphqlRequest {
-    let query = r#"query($first: Int!, $filter: IssueFilter) {
-  issues(first: $first, filter: $filter) {
+/// Build the GraphQL query for listing issues with optional filters and cursor.
+pub fn build_list_query(
+    limit: u32,
+    filters: &IssueFilters,
+    after: Option<&str>,
+) -> GraphqlRequest {
+    let query = r#"query($first: Int!, $filter: IssueFilter, $after: String) {
+  issues(first: $first, filter: $filter, after: $after) {
     nodes {
       id
       identifier
@@ -107,6 +114,7 @@ pub fn build_list_query(limit: u32, filters: &IssueFilters) -> GraphqlRequest {
     }
     pageInfo {
       hasNextPage
+      endCursor
     }
   }
 }"#
@@ -135,6 +143,7 @@ pub fn build_list_query(limit: u32, filters: &IssueFilters) -> GraphqlRequest {
     let variables = serde_json::json!({
         "first": limit,
         "filter": if filter.is_empty() { Value::Null } else { Value::Object(filter) },
+        "after": after,
     });
 
     GraphqlRequest {
@@ -177,6 +186,11 @@ pub fn parse_list_response(body: &Value, limit: u32) -> Result<IssueListResult, 
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
+    let end_cursor = body
+        .pointer("/data/issues/pageInfo/endCursor")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
     let message = if has_next_page {
         Some(format!(
             "Results truncated to {limit}. Use --limit to fetch more, or narrow your query."
@@ -187,8 +201,9 @@ pub fn parse_list_response(body: &Value, limit: u32) -> Result<IssueListResult, 
 
     Ok(IssueListResult {
         issues,
-        total_count: None,
         message,
+        has_more: has_next_page,
+        next_cursor: if has_next_page { end_cursor } else { None },
     })
 }
 
@@ -553,7 +568,7 @@ mod tests {
 
     #[test]
     fn build_list_query_no_filters() {
-        let req = build_list_query(10, &IssueFilters::default());
+        let req = build_list_query(10, &IssueFilters::default(), None);
         assert!(req.query.contains("issues(first: $first"));
         let vars = req.variables.unwrap();
         assert_eq!(vars["first"], 10);
@@ -567,7 +582,7 @@ mod tests {
             team_key: Some("ENG".to_string()),
             state_name: Some("In Progress".to_string()),
         };
-        let req = build_list_query(5, &filters);
+        let req = build_list_query(5, &filters, None);
         let vars = req.variables.unwrap();
         assert_eq!(vars["first"], 5);
         assert_eq!(vars["filter"]["assignee"]["id"]["eq"], "user-1");
@@ -831,6 +846,85 @@ mod tests {
         assert_eq!(vars["id"], "PROJ-1");
     }
 
+    // ---- Pagination tests ----
+
+    #[test]
+    fn build_list_query_with_cursor() {
+        let req = build_list_query(10, &IssueFilters::default(), Some("cursor123"));
+        assert!(req.query.contains("after: $after"));
+        assert!(req.query.contains("$after: String"));
+        let vars = req.variables.unwrap();
+        assert_eq!(vars["after"], "cursor123");
+    }
+
+    #[test]
+    fn build_list_query_without_cursor() {
+        let req = build_list_query(10, &IssueFilters::default(), None);
+        let vars = req.variables.unwrap();
+        assert!(vars["after"].is_null());
+    }
+
+    #[test]
+    fn build_list_query_includes_end_cursor_in_page_info() {
+        let req = build_list_query(10, &IssueFilters::default(), None);
+        assert!(req.query.contains("endCursor"));
+    }
+
+    #[test]
+    fn parse_list_response_returns_pagination_fields() {
+        let body = serde_json::json!({
+            "data": {
+                "issues": {
+                    "nodes": [],
+                    "pageInfo": {
+                        "hasNextPage": true,
+                        "endCursor": "cursor-abc"
+                    }
+                }
+            }
+        });
+        let result = parse_list_response(&body, 25).unwrap();
+        assert!(result.has_more);
+        assert_eq!(result.next_cursor.as_deref(), Some("cursor-abc"));
+    }
+
+    #[test]
+    fn parse_list_response_no_more_pages() {
+        let body = serde_json::json!({
+            "data": {
+                "issues": {
+                    "nodes": [],
+                    "pageInfo": {
+                        "hasNextPage": false
+                    }
+                }
+            }
+        });
+        let result = parse_list_response(&body, 25).unwrap();
+        assert!(!result.has_more);
+        assert!(result.next_cursor.is_none());
+    }
+
+    #[test]
+    fn parse_list_response_has_more_skips_data_serialization() {
+        // has_more and next_cursor should not appear in serialized data
+        let body = serde_json::json!({
+            "data": {
+                "issues": {
+                    "nodes": [],
+                    "pageInfo": {
+                        "hasNextPage": true,
+                        "endCursor": "cursor-abc"
+                    }
+                }
+            }
+        });
+        let result = parse_list_response(&body, 25).unwrap();
+        let serialized = serde_json::to_value(&result).unwrap();
+        assert!(serialized.get("has_more").is_none());
+        assert!(serialized.get("next_cursor").is_none());
+    }
+
     // ---- New field tests ----
 
     #[test]
@@ -927,7 +1021,7 @@ mod tests {
 
     #[test]
     fn build_list_query_includes_new_fields() {
-        let req = build_list_query(10, &IssueFilters::default());
+        let req = build_list_query(10, &IssueFilters::default(), None);
         assert!(req.query.contains("assignee { name email }"));
         assert!(req.query.contains("team { key name }"));
         assert!(req.query.contains("labels { nodes { name } }"));

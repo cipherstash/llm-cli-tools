@@ -59,6 +59,10 @@ pub struct TopicResponse {
 #[derive(Debug, Serialize)]
 pub struct LatestPostsResponse {
     pub posts: Vec<Post>,
+    #[serde(skip)]
+    pub has_more: bool,
+    #[serde(skip)]
+    pub next_page: Option<u32>,
 }
 
 /// Response from creating a post or reply.
@@ -235,9 +239,13 @@ impl Client {
     }
 
     /// List the latest posts across all topics.
-    pub fn list_latest_posts(&self) -> Result<LatestPostsResponse, String> {
-        let body = self.get("/posts.json")?;
-        parse_latest_posts_response(&body)
+    pub fn list_latest_posts(&self, page: Option<u32>) -> Result<LatestPostsResponse, String> {
+        let path = match page {
+            Some(p) => format!("/posts.json?page={p}"),
+            None => "/posts.json".to_string(),
+        };
+        let body = self.get(&path)?;
+        parse_latest_posts_response(&body, page)
     }
 
     /// Fetch a topic by ID, including its posts.
@@ -298,7 +306,10 @@ impl Client {
 }
 
 /// Parse the latest posts response from `GET /posts.json`.
-pub fn parse_latest_posts_response(body: &Value) -> Result<LatestPostsResponse, String> {
+pub fn parse_latest_posts_response(
+    body: &Value,
+    page: Option<u32>,
+) -> Result<LatestPostsResponse, String> {
     let posts_array = body
         .pointer("/latest_posts")
         .and_then(|v| v.as_array())
@@ -309,7 +320,19 @@ pub fn parse_latest_posts_response(body: &Value) -> Result<LatestPostsResponse, 
         .filter_map(|p| serde_json::from_value(p.clone()).ok())
         .collect();
 
-    Ok(LatestPostsResponse { posts })
+    let has_more = !posts.is_empty();
+    let current_page = page.unwrap_or(0);
+    let next_page = if has_more {
+        Some(current_page + 1)
+    } else {
+        None
+    };
+
+    Ok(LatestPostsResponse {
+        posts,
+        has_more,
+        next_page,
+    })
 }
 
 /// Parse a topic response from the Discourse API.
@@ -403,7 +426,7 @@ mod tests {
                 }
             ]
         });
-        let result = parse_latest_posts_response(&body).unwrap();
+        let result = parse_latest_posts_response(&body, None).unwrap();
         assert_eq!(result.posts.len(), 2);
         assert_eq!(result.posts[0].id, 301);
         assert_eq!(result.posts[0].topic_title.as_deref(), Some("Welcome"));
@@ -413,14 +436,14 @@ mod tests {
     #[test]
     fn parse_latest_posts_response_empty() {
         let body = serde_json::json!({ "latest_posts": [] });
-        let result = parse_latest_posts_response(&body).unwrap();
+        let result = parse_latest_posts_response(&body, None).unwrap();
         assert!(result.posts.is_empty());
     }
 
     #[test]
     fn parse_latest_posts_response_missing_key() {
         let body = serde_json::json!({});
-        assert!(parse_latest_posts_response(&body).is_err());
+        assert!(parse_latest_posts_response(&body, None).is_err());
     }
 
     #[test]
@@ -545,6 +568,55 @@ mod tests {
     fn parse_category_id_missing_categories() {
         let body = serde_json::json!({});
         assert!(parse_category_id(&body, "General").is_err());
+    }
+
+    // ---- Pagination tests ----
+
+    #[test]
+    fn parse_latest_posts_response_has_more_when_posts_exist() {
+        let body = serde_json::json!({
+            "latest_posts": [
+                {
+                    "id": 301,
+                    "topic_id": 50,
+                    "username": "james",
+                    "cooked": "<p>Hello</p>",
+                    "post_number": 1,
+                    "created_at": "2026-04-01T00:00:00Z"
+                }
+            ]
+        });
+        let result = parse_latest_posts_response(&body, Some(0)).unwrap();
+        assert!(result.has_more);
+        assert_eq!(result.next_page, Some(1));
+    }
+
+    #[test]
+    fn parse_latest_posts_response_no_more_when_empty() {
+        let body = serde_json::json!({ "latest_posts": [] });
+        let result = parse_latest_posts_response(&body, Some(2)).unwrap();
+        assert!(!result.has_more);
+        assert!(result.next_page.is_none());
+    }
+
+    #[test]
+    fn parse_latest_posts_response_pagination_skipped_in_serialization() {
+        let body = serde_json::json!({
+            "latest_posts": [
+                {
+                    "id": 301,
+                    "topic_id": 50,
+                    "username": "james",
+                    "cooked": "<p>Hello</p>",
+                    "post_number": 1,
+                    "created_at": "2026-04-01T00:00:00Z"
+                }
+            ]
+        });
+        let result = parse_latest_posts_response(&body, Some(0)).unwrap();
+        let serialized = serde_json::to_value(&result).unwrap();
+        assert!(serialized.get("has_more").is_none());
+        assert!(serialized.get("next_page").is_none());
     }
 
     // ---- New field tests ----
