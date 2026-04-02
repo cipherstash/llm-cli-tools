@@ -56,20 +56,27 @@ API keys are retrieved from 1Password at call time via the `op` CLI. Each config
 # Dispatcher
 llm-cli linear issues list
 llm-cli discourse posts latest
+llm-cli slack messages read --channel general
 
 # Direct invocation
-llm-cli-linear issues list --limit 10
+llm-cli-linear issues list --limit 10 --mine --team ENG
+llm-cli-linear issues list --priority 1 --label bug
+llm-cli-linear issues list --cursor <next_cursor>
 llm-cli-linear issues get --id PROJ-123
 llm-cli-linear issues create --title "Bug" --team ENG
+llm-cli-linear issues create --input issue.json
 llm-cli-linear issues close --id PROJ-123
 
-llm-cli-discourse posts latest
+llm-cli-discourse posts latest --page 2
 llm-cli-discourse posts get --id 42
 llm-cli-discourse posts create --title "Topic" --category general --raw "Body"
-llm-cli-discourse comments create --post-id 42 --raw "Reply"
+llm-cli-discourse posts create --input topic.json
+llm-cli-discourse comments create --topic-id 42 --raw "Reply"
 
 llm-cli-slack messages send --channel general --text "hello"
-llm-cli-slack messages read --channel general
+llm-cli-slack messages send --input message.json
+llm-cli-slack messages read --channel general --oldest 1711900000 --latest 1711990000
+llm-cli-slack messages read --channel general --cursor <next_cursor>
 llm-cli-slack messages dm --user U12345 --text "hey"
 llm-cli-slack messages mentions
 llm-cli-slack summary --channel general
@@ -109,8 +116,83 @@ Re-run after installing new subcommands to pick up their completions.
 - `--human` — human-readable output instead of JSON
 - `--debug` — log HTTP requests/responses to stderr
 - `--debug=pretty` — pretty-print JSON bodies and GraphQL queries
-- `--debug=curl_cmd` — print reproducible curl commands (warns about unredacted secrets)
+- `--debug=curl_cmd` — print reproducible curl commands (skips confirmation prompt when stdin is not a TTY)
 - `--debug=pretty,curl_cmd` — both
+
+## JSON output format
+
+### Success
+
+```json
+{
+  "success": true,
+  "data": { ... }
+}
+```
+
+List commands include a `pagination` object when more results are available:
+
+```json
+{
+  "success": true,
+  "data": { ... },
+  "pagination": {
+    "has_more": true,
+    "next_cursor": "WyIyMDI2LTA0LTAxIl0"
+  }
+}
+```
+
+### Errors
+
+Errors are output as structured JSON **to stdout** (not stderr) with a non-zero exit code:
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "CONFIG_NOT_FOUND",
+    "message": "Config file not found at ~/.config/llm-cli/config.toml",
+    "suggestion": "Create a config file with..."
+  }
+}
+```
+
+In `--human` mode, errors go to stderr as plain text.
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Unknown/general error |
+| 2 | Configuration error (missing config file, bad TOML, missing section) |
+| 3 | Authentication error (1Password CLI missing, credential retrieval failed) |
+| 4 | API error (HTTP failure, bad response) |
+| 5 | Invalid CLI input (bad debug mode) |
+
+## JSON input
+
+Create commands accept `--input <file>` for structured JSON input instead of individual flags. Use `--input -` to read from stdin:
+
+```sh
+echo '{"title": "Bug", "team": "ENG"}' | llm-cli-linear issues create --input -
+llm-cli-slack messages send --input message.json
+```
+
+## Automated discovery
+
+Each API tool has a `schema` subcommand that outputs a JSON description of available commands and arguments:
+
+```sh
+llm-cli-linear schema
+llm-cli-discourse schema
+llm-cli-slack schema
+```
+
+## Resilience
+
+All API crates retry once with a 1-second backoff on transient HTTP errors (429 rate limits, 5xx server errors). Slack respects the `Retry-After` header when present. Destructive operations (delete) are not retried.
 
 ## Design principles
 
@@ -127,4 +209,3 @@ packages/
 docs/
   plans/             # Design documents
 ```
-

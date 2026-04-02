@@ -7,7 +7,7 @@ A Cargo workspace of agent-first CLI tools for interacting with SaaS APIs (Linea
 ## Build and test
 
 ```sh
-cargo test --workspace    # Run all tests (131 tests across 4 crates)
+cargo test --workspace    # Run all tests (323 tests across 4 crates)
 cargo build --workspace   # Build all crates
 ./install.sh              # Install all binaries to ~/.cargo/bin
 ```

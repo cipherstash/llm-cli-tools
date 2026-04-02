@@ -12,6 +12,11 @@ llm-cli discourse posts latest
 llm-cli slack messages read --channel general
 ```
 
+## Built-in commands
+
+- `llm-cli init` — interactive setup wizard to generate `~/.config/llm-cli/config.toml`
+- `llm-cli completions --shell <bash|zsh|fish>` — generate shell completions for the dispatcher and all installed subcommands
+
 ## Install
 
 ```sh
