@@ -26,7 +26,13 @@ pub struct CliError {
 
 impl CliError {
     pub fn exit_code(&self) -> i32 {
-        1
+        match self.detail.code {
+            code if code.starts_with("CONFIG_") => 2,
+            "OP_NOT_FOUND" | "OP_FAILED" => 3,
+            "API_ERROR" => 4,
+            "INVALID_DEBUG_MODE" => 5,
+            _ => 1,
+        }
     }
 
     /// Render this error to the appropriate output stream.
@@ -386,7 +392,10 @@ mod tests {
         err.render_to(&mut stdout_buf, &mut stderr_buf);
         let stdout_str = String::from_utf8(stdout_buf).unwrap();
         let stderr_str = String::from_utf8(stderr_buf).unwrap();
-        assert!(stdout_str.is_empty(), "Human errors should not go to stdout");
+        assert!(
+            stdout_str.is_empty(),
+            "Human errors should not go to stdout"
+        );
         assert!(stderr_str.contains("something broke"));
         assert!(stderr_str.contains("try again"));
     }
@@ -428,7 +437,7 @@ mod tests {
     }
 
     #[test]
-    fn cli_error_exit_code_is_one() {
+    fn cli_error_exit_code_unknown_is_one() {
         let err = CliError {
             detail: ErrorDetail {
                 code: "TEST",
@@ -438,6 +447,84 @@ mod tests {
             human: false,
         };
         assert_eq!(err.exit_code(), 1);
+    }
+
+    #[test]
+    fn exit_code_config_not_found() {
+        let err = CliError {
+            detail: ErrorDetail {
+                code: "CONFIG_NOT_FOUND",
+                message: "Config file not found".into(),
+                suggestion: "Create config".into(),
+            },
+            human: false,
+        };
+        assert_eq!(err.exit_code(), 2);
+    }
+
+    #[test]
+    fn exit_code_config_parse_error() {
+        let err = CliError {
+            detail: ErrorDetail {
+                code: "CONFIG_PARSE_ERROR",
+                message: "Bad TOML".into(),
+                suggestion: "Fix syntax".into(),
+            },
+            human: false,
+        };
+        assert_eq!(err.exit_code(), 2);
+    }
+
+    #[test]
+    fn exit_code_op_not_found() {
+        let err = CliError {
+            detail: ErrorDetail {
+                code: "OP_NOT_FOUND",
+                message: "1Password CLI not found".into(),
+                suggestion: "Install op".into(),
+            },
+            human: false,
+        };
+        assert_eq!(err.exit_code(), 3);
+    }
+
+    #[test]
+    fn exit_code_op_failed() {
+        let err = CliError {
+            detail: ErrorDetail {
+                code: "OP_FAILED",
+                message: "Credential retrieval failed".into(),
+                suggestion: "Check item ID".into(),
+            },
+            human: false,
+        };
+        assert_eq!(err.exit_code(), 3);
+    }
+
+    #[test]
+    fn exit_code_api_error() {
+        let err = CliError {
+            detail: ErrorDetail {
+                code: "API_ERROR",
+                message: "HTTP 500".into(),
+                suggestion: "Retry".into(),
+            },
+            human: false,
+        };
+        assert_eq!(err.exit_code(), 4);
+    }
+
+    #[test]
+    fn exit_code_invalid_debug_mode() {
+        let err = CliError {
+            detail: ErrorDetail {
+                code: "INVALID_DEBUG_MODE",
+                message: "Bad debug mode".into(),
+                suggestion: "Use compact, pretty, or curl_cmd".into(),
+            },
+            human: false,
+        };
+        assert_eq!(err.exit_code(), 5);
     }
 
     // ---- New field formatting tests ----
@@ -488,8 +575,14 @@ mod tests {
         };
         let output = format_topic_human(&response);
         assert!(!output.contains("Likes"), "Should not show Likes when zero");
-        assert!(!output.contains("Replies"), "Should not show Replies when zero");
-        assert!(!output.contains("Tags"), "Should not show Tags when missing");
+        assert!(
+            !output.contains("Replies"),
+            "Should not show Replies when zero"
+        );
+        assert!(
+            !output.contains("Tags"),
+            "Should not show Tags when missing"
+        );
         assert!(
             !output.contains("Last posted"),
             "Should not show Last posted when missing"
