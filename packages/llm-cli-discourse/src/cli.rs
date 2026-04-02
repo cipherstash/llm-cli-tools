@@ -103,6 +103,8 @@ pub enum Command {
         #[arg(long)]
         shell: Shell,
     },
+    /// Output a JSON description of this tool's commands and arguments for automated discovery.
+    Schema,
 }
 
 #[derive(Debug, Subcommand)]
@@ -122,14 +124,18 @@ pub enum PostsAction {
     /// Create a new topic.
     Create {
         /// Topic title.
-        #[arg(long)]
-        title: String,
+        #[arg(long, required_unless_present = "input")]
+        title: Option<String>,
         /// Category name or ID.
-        #[arg(long)]
-        category: String,
+        #[arg(long, required_unless_present = "input")]
+        category: Option<String>,
         /// Post body (raw markdown).
         #[arg(long)]
         raw: Option<String>,
+        /// JSON input from file or stdin. Use "-" for stdin. Overrides individual flags.
+        /// Expected format: {"title": "...", "category": "...", "raw": "..."}
+        #[arg(long, conflicts_with_all = ["title", "category", "raw"])]
+        input: Option<String>,
     },
     /// Delete a post/topic by ID.
     Delete {
@@ -244,11 +250,13 @@ mod tests {
                         title,
                         category,
                         raw,
+                        input,
                     },
             } => {
-                assert_eq!(title, "My Topic");
-                assert_eq!(category, "general");
+                assert_eq!(title.as_deref(), Some("My Topic"));
+                assert_eq!(category.as_deref(), Some("general"));
                 assert!(raw.is_none());
+                assert!(input.is_none());
             }
             _ => panic!("Expected posts create"),
         }
@@ -273,6 +281,46 @@ mod tests {
             } => assert_eq!(raw.as_deref(), Some("Body text")),
             _ => panic!("Expected posts create"),
         }
+    }
+
+    #[test]
+    fn posts_create_with_input_flag() {
+        let cli = parse_args(&["posts", "create", "--input", "topic.json"]).unwrap();
+        match cli.command {
+            Command::Posts {
+                action:
+                    PostsAction::Create {
+                        input,
+                        title,
+                        category,
+                        ..
+                    },
+            } => {
+                assert_eq!(input.as_deref(), Some("topic.json"));
+                assert!(title.is_none());
+                assert!(category.is_none());
+            }
+            _ => panic!("Expected posts create"),
+        }
+    }
+
+    #[test]
+    fn posts_create_input_conflicts_with_title() {
+        let result = parse_args(&["posts", "create", "--input", "topic.json", "--title", "T"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn posts_create_input_conflicts_with_category() {
+        let result = parse_args(&[
+            "posts",
+            "create",
+            "--input",
+            "topic.json",
+            "--category",
+            "C",
+        ]);
+        assert!(result.is_err());
     }
 
     #[test]
@@ -322,6 +370,12 @@ mod tests {
     fn instance_flag_global() {
         let cli = parse_args(&["--instance", "my-forum", "posts", "get", "--id", "1"]).unwrap();
         assert_eq!(cli.instance.as_deref(), Some("my-forum"));
+    }
+
+    #[test]
+    fn schema_subcommand_parses() {
+        let cli = parse_args(&["schema"]).unwrap();
+        assert!(matches!(cli.command, Command::Schema));
     }
 
     #[test]

@@ -80,6 +80,28 @@ fn credential_error_to_cli(
     output::CliError { detail, human }
 }
 
+/// Read JSON input from a file path or stdin ("-").
+fn read_json_input(source: &str) -> Result<serde_json::Value, String> {
+    let content = if source == "-" {
+        let mut buf = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)
+            .map_err(|e| format!("Failed to read stdin: {e}"))?;
+        buf
+    } else {
+        std::fs::read_to_string(source)
+            .map_err(|e| format!("Failed to read file '{source}': {e}"))?
+    };
+    serde_json::from_str(&content).map_err(|e| format!("Failed to parse JSON input: {e}"))
+}
+
+/// Extract a required string field from a JSON value.
+fn required_string(json: &serde_json::Value, field: &str) -> Result<String, String> {
+    json.get(field)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| format!("Missing required field '{field}' in JSON input"))
+}
+
 fn api_error_to_cli(msg: String, human: bool) -> output::CliError {
     output::CliError {
         detail: output::ErrorDetail {
@@ -154,10 +176,120 @@ fn days_to_date(days: i64) -> String {
     format!("{y:04}-{m:02}-{d:02}")
 }
 
+/// Build a JSON schema description of the CLI for automated discovery.
+fn build_schema(cmd: &clap::Command) -> serde_json::Value {
+    let mut root = serde_json::Map::new();
+    root.insert("name".to_string(), serde_json::json!(cmd.get_name()));
+    if let Some(version) = cmd.get_version() {
+        root.insert("version".to_string(), serde_json::json!(version));
+    }
+    if let Some(about) = cmd.get_about() {
+        root.insert(
+            "description".to_string(),
+            serde_json::json!(about.to_string()),
+        );
+    }
+
+    let global_args = build_args_schema(cmd);
+    if !global_args.is_empty() {
+        root.insert(
+            "global_args".to_string(),
+            serde_json::Value::Object(global_args),
+        );
+    }
+
+    let commands = build_subcommands_schema(cmd);
+    if !commands.is_empty() {
+        root.insert("commands".to_string(), serde_json::Value::Object(commands));
+    }
+
+    serde_json::Value::Object(root)
+}
+
+fn build_args_schema(cmd: &clap::Command) -> serde_json::Map<String, serde_json::Value> {
+    let mut args_map = serde_json::Map::new();
+    for arg in cmd.get_arguments() {
+        let id = arg.get_id().as_str();
+        if id == "help" || id == "version" {
+            continue;
+        }
+        let mut arg_obj = serde_json::Map::new();
+
+        let type_name = if arg.get_action().takes_values() {
+            "string"
+        } else {
+            "boolean"
+        };
+        arg_obj.insert("type".to_string(), serde_json::json!(type_name));
+
+        if let Some(help) = arg.get_help() {
+            arg_obj.insert(
+                "description".to_string(),
+                serde_json::json!(help.to_string()),
+            );
+        }
+
+        let defaults: Vec<&str> = arg
+            .get_default_values()
+            .iter()
+            .filter_map(|v| v.to_str())
+            .collect();
+        if !defaults.is_empty() {
+            arg_obj.insert("default".to_string(), serde_json::json!(defaults.join(",")));
+        }
+
+        if arg.is_required_set() {
+            arg_obj.insert("required".to_string(), serde_json::json!(true));
+        }
+
+        let flag_name = format!("--{id}");
+        args_map.insert(flag_name, serde_json::Value::Object(arg_obj));
+    }
+    args_map
+}
+
+fn build_subcommands_schema(cmd: &clap::Command) -> serde_json::Map<String, serde_json::Value> {
+    let mut commands_map = serde_json::Map::new();
+    for sub in cmd.get_subcommands() {
+        let name = sub.get_name();
+        if name == "help" || name == "completions" || name == "schema" {
+            continue;
+        }
+
+        let mut sub_obj = serde_json::Map::new();
+        if let Some(about) = sub.get_about() {
+            sub_obj.insert(
+                "description".to_string(),
+                serde_json::json!(about.to_string()),
+            );
+        }
+
+        let args = build_args_schema(sub);
+        if !args.is_empty() {
+            sub_obj.insert("args".to_string(), serde_json::Value::Object(args));
+        }
+
+        let nested = build_subcommands_schema(sub);
+        if !nested.is_empty() {
+            sub_obj.insert("subcommands".to_string(), serde_json::Value::Object(nested));
+        }
+
+        commands_map.insert(name.to_string(), serde_json::Value::Object(sub_obj));
+    }
+    commands_map
+}
+
 fn run(args: cli::Cli) -> Result<(), output::CliError> {
     if let cli::Command::Completions { shell } = &args.command {
         let mut cmd = <cli::Cli as clap::CommandFactory>::command();
         clap_complete::generate(*shell, &mut cmd, "llm-cli-slack", &mut std::io::stdout());
+        return Ok(());
+    }
+
+    if let cli::Command::Schema = &args.command {
+        let cmd = <cli::Cli as clap::CommandFactory>::command();
+        let schema = build_schema(&cmd);
+        println!("{}", serde_json::to_string_pretty(&schema).unwrap());
         return Ok(());
     }
 
@@ -189,7 +321,22 @@ fn run(args: cli::Cli) -> Result<(), output::CliError> {
                 channel,
                 text,
                 thread_ts,
+                input,
             } => {
+                let (channel, text, thread_ts) = if let Some(ref source) = input {
+                    let json = read_json_input(source).map_err(|e| api_error_to_cli(e, human))?;
+                    let ch = required_string(&json, "channel")
+                        .map_err(|e| api_error_to_cli(e, human))?;
+                    let tx =
+                        required_string(&json, "text").map_err(|e| api_error_to_cli(e, human))?;
+                    let ts = json
+                        .get("thread_ts")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    (ch, tx, ts)
+                } else {
+                    (channel.unwrap(), text.unwrap(), thread_ts)
+                };
                 let result = client
                     .send_message(&channel, &text, thread_ts.as_deref())
                     .map_err(|e| api_error_to_cli(e, human))?;
@@ -203,9 +350,17 @@ fn run(args: cli::Cli) -> Result<(), output::CliError> {
                 channel,
                 limit,
                 cursor,
+                oldest,
+                latest,
             } => {
                 let result = client
-                    .read_history(&channel, limit, cursor.as_deref())
+                    .read_history(
+                        &channel,
+                        limit,
+                        cursor.as_deref(),
+                        oldest.as_deref(),
+                        latest.as_deref(),
+                    )
                     .map_err(|e| api_error_to_cli(e, human))?;
                 if human {
                     output::format_history_human(&result)
@@ -269,7 +424,7 @@ fn run(args: cli::Cli) -> Result<(), output::CliError> {
                 format!("{}\n", output::format_success(&result))
             }
         }
-        cli::Command::Completions { .. } => unreachable!(),
+        cli::Command::Completions { .. } | cli::Command::Schema => unreachable!(),
     };
 
     pager::print_with_pager(&out, human, debug_active);
@@ -279,6 +434,83 @@ fn run(args: cli::Cli) -> Result<(), output::CliError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_schema_contains_top_level_fields() {
+        let cmd = <cli::Cli as clap::CommandFactory>::command();
+        let schema = build_schema(&cmd);
+        assert_eq!(schema["name"], "llm-cli-slack");
+        assert!(schema.get("version").is_some());
+        assert!(schema.get("description").is_some());
+        assert!(schema.get("commands").is_some());
+        assert!(schema.get("global_args").is_some());
+    }
+
+    #[test]
+    fn build_schema_contains_messages_command() {
+        let cmd = <cli::Cli as clap::CommandFactory>::command();
+        let schema = build_schema(&cmd);
+        let commands = schema.get("commands").unwrap();
+        assert!(commands.get("messages").is_some());
+    }
+
+    #[test]
+    fn build_schema_contains_summary_command() {
+        let cmd = <cli::Cli as clap::CommandFactory>::command();
+        let schema = build_schema(&cmd);
+        let commands = schema.get("commands").unwrap();
+        assert!(commands.get("summary").is_some());
+    }
+
+    #[test]
+    fn build_schema_excludes_help_completions_schema() {
+        let cmd = <cli::Cli as clap::CommandFactory>::command();
+        let schema = build_schema(&cmd);
+        let commands = schema.get("commands").unwrap();
+        assert!(commands.get("completions").is_none());
+        assert!(commands.get("schema").is_none());
+        assert!(commands.get("help").is_none());
+    }
+
+    #[test]
+    fn build_schema_is_valid_json() {
+        let cmd = <cli::Cli as clap::CommandFactory>::command();
+        let schema = build_schema(&cmd);
+        let json_str = serde_json::to_string_pretty(&schema).unwrap();
+        let _: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+    }
+
+    #[test]
+    fn read_json_input_from_file() {
+        let dir = std::env::temp_dir().join("llm-cli-slack-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test_input.json");
+        std::fs::write(&path, r#"{"channel": "general", "text": "hello"}"#).unwrap();
+        let result = read_json_input(path.to_str().unwrap()).unwrap();
+        assert_eq!(result["channel"], "general");
+        assert_eq!(result["text"], "hello");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn read_json_input_file_not_found() {
+        let result = read_json_input("/nonexistent/path.json");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Failed to read file"));
+    }
+
+    #[test]
+    fn required_string_extracts_field() {
+        let json = serde_json::json!({"channel": "general"});
+        assert_eq!(required_string(&json, "channel").unwrap(), "general");
+    }
+
+    #[test]
+    fn required_string_missing_field() {
+        let json = serde_json::json!({});
+        let err = required_string(&json, "channel").unwrap_err();
+        assert!(err.contains("Missing required field 'channel'"));
+    }
 
     #[test]
     fn date_to_timestamp_epoch() {

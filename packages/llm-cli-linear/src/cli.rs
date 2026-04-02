@@ -93,6 +93,8 @@ pub enum Command {
         #[arg(long)]
         shell: Shell,
     },
+    /// Output a JSON description of this tool's commands and arguments for automated discovery.
+    Schema,
 }
 
 #[derive(Debug, Subcommand)]
@@ -111,6 +113,12 @@ pub enum IssuesAction {
         /// Filter by workflow state name (e.g., "In Progress", "Todo").
         #[arg(long)]
         state: Option<String>,
+        /// Filter by priority (1=urgent, 2=high, 3=medium, 4=low).
+        #[arg(long, value_parser = clap::value_parser!(u8).range(1..=4))]
+        priority: Option<u8>,
+        /// Filter by label name.
+        #[arg(long)]
+        label: Option<String>,
         /// Pagination cursor from a previous response. Pass the `next_cursor` value to fetch the next page.
         #[arg(long)]
         cursor: Option<String>,
@@ -124,17 +132,21 @@ pub enum IssuesAction {
     /// Create a new issue.
     Create {
         /// Issue title.
-        #[arg(long)]
-        title: String,
+        #[arg(long, required_unless_present = "input")]
+        title: Option<String>,
         /// Team key or identifier.
-        #[arg(long)]
-        team: String,
+        #[arg(long, required_unless_present = "input")]
+        team: Option<String>,
         /// Issue description (markdown).
         #[arg(long)]
         description: Option<String>,
         /// Priority (1 = urgent, 2 = high, 3 = medium, 4 = low).
         #[arg(long, value_parser = clap::value_parser!(u8).range(1..=4))]
         priority: Option<u8>,
+        /// JSON input from file or stdin. Use "-" for stdin. Overrides individual flags.
+        /// Expected format: {"title": "...", "team": "...", "description": "...", "priority": 1}
+        #[arg(long, conflicts_with_all = ["title", "team", "description", "priority"])]
+        input: Option<String>,
     },
     /// Close an issue by setting its state to "Done".
     Close {
@@ -269,12 +281,14 @@ mod tests {
                         team,
                         description,
                         priority,
+                        input,
                     },
             } => {
-                assert_eq!(title, "My Issue");
-                assert_eq!(team, "ENG");
+                assert_eq!(title.as_deref(), Some("My Issue"));
+                assert_eq!(team.as_deref(), Some("ENG"));
                 assert!(description.is_none());
                 assert!(priority.is_none());
+                assert!(input.is_none());
             }
             _ => panic!("Expected issues create"),
         }
@@ -303,10 +317,11 @@ mod tests {
                         team,
                         description,
                         priority,
+                        ..
                     },
             } => {
-                assert_eq!(title, "Bug fix");
-                assert_eq!(team, "ENG");
+                assert_eq!(title.as_deref(), Some("Bug fix"));
+                assert_eq!(team.as_deref(), Some("ENG"));
                 assert_eq!(description.as_deref(), Some("Fix the thing"));
                 assert_eq!(priority, Some(2));
             }
@@ -367,6 +382,93 @@ mod tests {
     fn human_flag_after_subcommand() {
         let cli = parse_args(&["issues", "--human", "list"]).unwrap();
         assert!(cli.human);
+    }
+
+    #[test]
+    fn issues_list_with_priority_filter() {
+        let cli = parse_args(&["issues", "list", "--priority", "2"]).unwrap();
+        match cli.command {
+            Command::Issues {
+                action: IssuesAction::List { priority, .. },
+            } => {
+                assert_eq!(priority, Some(2));
+            }
+            _ => panic!("Expected issues list"),
+        }
+    }
+
+    #[test]
+    fn issues_list_with_label_filter() {
+        let cli = parse_args(&["issues", "list", "--label", "bug"]).unwrap();
+        match cli.command {
+            Command::Issues {
+                action: IssuesAction::List { label, .. },
+            } => {
+                assert_eq!(label.as_deref(), Some("bug"));
+            }
+            _ => panic!("Expected issues list"),
+        }
+    }
+
+    #[test]
+    fn issues_list_rejects_invalid_priority_filter() {
+        let result = parse_args(&["issues", "list", "--priority", "5"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn issues_list_rejects_zero_priority_filter() {
+        let result = parse_args(&["issues", "list", "--priority", "0"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn issues_create_with_input_flag() {
+        let cli = parse_args(&["issues", "create", "--input", "data.json"]).unwrap();
+        match cli.command {
+            Command::Issues {
+                action:
+                    IssuesAction::Create {
+                        input, title, team, ..
+                    },
+            } => {
+                assert_eq!(input.as_deref(), Some("data.json"));
+                assert!(title.is_none());
+                assert!(team.is_none());
+            }
+            _ => panic!("Expected issues create"),
+        }
+    }
+
+    #[test]
+    fn issues_create_with_input_stdin() {
+        let cli = parse_args(&["issues", "create", "--input", "-"]).unwrap();
+        match cli.command {
+            Command::Issues {
+                action: IssuesAction::Create { input, .. },
+            } => {
+                assert_eq!(input.as_deref(), Some("-"));
+            }
+            _ => panic!("Expected issues create"),
+        }
+    }
+
+    #[test]
+    fn issues_create_input_conflicts_with_title() {
+        let result = parse_args(&["issues", "create", "--input", "data.json", "--title", "T"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn issues_create_input_conflicts_with_team() {
+        let result = parse_args(&["issues", "create", "--input", "data.json", "--team", "ENG"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn schema_subcommand_parses() {
+        let cli = parse_args(&["schema"]).unwrap();
+        assert!(matches!(cli.command, Command::Schema));
     }
 
     #[test]

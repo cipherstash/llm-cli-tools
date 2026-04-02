@@ -92,6 +92,8 @@ pub enum Command {
         #[arg(long)]
         shell: Shell,
     },
+    /// Output a JSON description of this tool's commands and arguments for automated discovery.
+    Schema,
     /// Get Slack AI-generated channel summary for a date range.
     /// Defaults to today and yesterday.
     Summary {
@@ -112,14 +114,18 @@ pub enum MessagesAction {
     /// Send a message to a channel. Use --thread-ts to reply in a thread.
     Send {
         /// Channel name or ID.
-        #[arg(long)]
-        channel: String,
+        #[arg(long, required_unless_present = "input")]
+        channel: Option<String>,
         /// Message text.
-        #[arg(long)]
-        text: String,
+        #[arg(long, required_unless_present = "input")]
+        text: Option<String>,
         /// Thread timestamp to reply to (makes this a threaded reply).
         #[arg(long)]
         thread_ts: Option<String>,
+        /// JSON input from file or stdin. Use "-" for stdin. Overrides individual flags.
+        /// Expected format: {"channel": "...", "text": "...", "thread_ts": "..."}
+        #[arg(long, conflicts_with_all = ["channel", "text", "thread_ts"])]
+        input: Option<String>,
     },
     /// Read recent messages from a channel.
     Read {
@@ -132,6 +138,12 @@ pub enum MessagesAction {
         /// Pagination cursor from a previous response. Pass the `next_cursor` value to fetch the next page.
         #[arg(long)]
         cursor: Option<String>,
+        /// Only show messages after this timestamp (Unix epoch or Slack ts format).
+        #[arg(long)]
+        oldest: Option<String>,
+        /// Only show messages before this timestamp (Unix epoch or Slack ts format).
+        #[arg(long)]
+        latest: Option<String>,
     },
     /// Send a direct message to a user.
     Dm {
@@ -182,11 +194,13 @@ mod tests {
                         channel,
                         text,
                         thread_ts,
+                        input,
                     },
             } => {
-                assert_eq!(channel, "general");
-                assert_eq!(text, "hello");
+                assert_eq!(channel.as_deref(), Some("general"));
+                assert_eq!(text.as_deref(), Some("hello"));
                 assert!(thread_ts.is_none());
+                assert!(input.is_none());
             }
             _ => panic!("Expected messages send"),
         }
@@ -218,14 +232,51 @@ mod tests {
     }
 
     #[test]
+    fn messages_send_with_input_flag() {
+        let cli = parse_args(&["messages", "send", "--input", "msg.json"]).unwrap();
+        match cli.command {
+            Command::Messages {
+                action:
+                    MessagesAction::Send {
+                        input,
+                        channel,
+                        text,
+                        ..
+                    },
+            } => {
+                assert_eq!(input.as_deref(), Some("msg.json"));
+                assert!(channel.is_none());
+                assert!(text.is_none());
+            }
+            _ => panic!("Expected messages send"),
+        }
+    }
+
+    #[test]
+    fn messages_send_input_conflicts_with_channel() {
+        let result = parse_args(&[
+            "messages",
+            "send",
+            "--input",
+            "msg.json",
+            "--channel",
+            "general",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn messages_send_input_conflicts_with_text() {
+        let result = parse_args(&["messages", "send", "--input", "msg.json", "--text", "hello"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn messages_read_defaults() {
         let cli = parse_args(&["messages", "read", "--channel", "general"]).unwrap();
         match cli.command {
             Command::Messages {
-                action:
-                    MessagesAction::Read {
-                        channel, limit, ..
-                    },
+                action: MessagesAction::Read { channel, limit, .. },
             } => {
                 assert_eq!(channel, "general");
                 assert_eq!(limit, 25);
@@ -351,6 +402,78 @@ mod tests {
     fn human_flag_global() {
         let cli = parse_args(&["--human", "messages", "mentions"]).unwrap();
         assert!(cli.human);
+    }
+
+    #[test]
+    fn messages_read_with_oldest() {
+        let cli = parse_args(&[
+            "messages",
+            "read",
+            "--channel",
+            "general",
+            "--oldest",
+            "1234567890.000000",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Messages {
+                action: MessagesAction::Read { oldest, .. },
+            } => {
+                assert_eq!(oldest.as_deref(), Some("1234567890.000000"));
+            }
+            _ => panic!("Expected messages read"),
+        }
+    }
+
+    #[test]
+    fn messages_read_with_latest() {
+        let cli = parse_args(&[
+            "messages",
+            "read",
+            "--channel",
+            "general",
+            "--latest",
+            "1234567899.000000",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Messages {
+                action: MessagesAction::Read { latest, .. },
+            } => {
+                assert_eq!(latest.as_deref(), Some("1234567899.000000"));
+            }
+            _ => panic!("Expected messages read"),
+        }
+    }
+
+    #[test]
+    fn messages_read_with_oldest_and_latest() {
+        let cli = parse_args(&[
+            "messages",
+            "read",
+            "--channel",
+            "general",
+            "--oldest",
+            "1234567890.000000",
+            "--latest",
+            "1234567899.000000",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Messages {
+                action: MessagesAction::Read { oldest, latest, .. },
+            } => {
+                assert_eq!(oldest.as_deref(), Some("1234567890.000000"));
+                assert_eq!(latest.as_deref(), Some("1234567899.000000"));
+            }
+            _ => panic!("Expected messages read"),
+        }
+    }
+
+    #[test]
+    fn schema_subcommand_parses() {
+        let cli = parse_args(&["schema"]).unwrap();
+        assert!(matches!(cli.command, Command::Schema));
     }
 
     #[test]
