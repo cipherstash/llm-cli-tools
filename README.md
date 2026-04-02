@@ -128,18 +128,3 @@ docs/
   plans/             # Design documents
 ```
 
-## Rough edges that impact usablity (via an agent)
-
-### Medium
-
-1. Limited filtering — Linear has --mine, --team, --state but no date range, priority, or label filters. Discourse and Slack list commands have almost no filtering. Agents can't narrow queries to avoid blowing context windows.
-
-2. No retry/rate-limit handling — All three crates fail immediately on transient HTTP errors. Slack rate-limits aggressively. A single retry with backoff would prevent many agent workflow failures.
-
-3. Single exit code — All errors return exit code 1. Differentiating config (2), auth (3), and API (4) errors would let agents choose recovery strategies without parsing the error body.
-
-### Low
-
-4. No --schema flag — PRINCIPLES.md suggests a flag to output JSON Schema of input/output for automated discovery. Not implemented yet.
-
-5. No stdin/--input for complex input — PRINCIPLES.md suggests accepting JSON input via stdin for structured data. Currently all input is via flags.

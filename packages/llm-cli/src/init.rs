@@ -124,7 +124,10 @@ fn setup_discourse() -> Result<Option<DiscourseConfig>, String> {
         return Ok(None);
     }
 
-    let instance_name = prompt("  Instance name (used in config as [discourse.<name>])", "my-forum")?;
+    let instance_name = prompt(
+        "  Instance name (used in config as [discourse.<name>])",
+        "my-forum",
+    )?;
     let base_url = prompt("  Base URL (e.g. https://forum.example.com)", "")?;
     if base_url.is_empty() {
         info("  Skipping Discourse (no base URL provided).");
@@ -231,10 +234,7 @@ pub fn run(subcommands: &[String]) -> Result<(), String> {
     }
 
     info("");
-    info(&format!(
-        "Detected tools: {}",
-        subcommands.join(", ")
-    ));
+    info(&format!("Detected tools: {}", subcommands.join(", ")));
 
     let linear_cfg = if has_linear { setup_linear()? } else { None };
     let discourse_cfg = if has_discourse {
@@ -293,10 +293,7 @@ mod tests {
             op_item_id: "abc-123".to_string(),
         };
         let toml = build_toml(Some(&linear), None, None);
-        assert_eq!(
-            toml,
-            "[linear]\nop_item_id = \"abc-123\"\n"
-        );
+        assert_eq!(toml, "[linear]\nop_item_id = \"abc-123\"\n");
     }
 
     #[test]
@@ -320,10 +317,7 @@ mod tests {
             op_item_id: "ghi-789".to_string(),
         };
         let toml = build_toml(None, None, Some(&slack));
-        assert_eq!(
-            toml,
-            "[slack]\nop_item_id = \"ghi-789\"\n"
-        );
+        assert_eq!(toml, "[slack]\nop_item_id = \"ghi-789\"\n");
     }
 
     #[test]
