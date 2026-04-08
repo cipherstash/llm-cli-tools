@@ -11,6 +11,12 @@ A suite of CLI tools designed for LLM agents to interact with SaaS APIs. JSON ou
 | `llm-cli-discourse` | [Discourse](https://www.discourse.org) | REST |
 | `llm-cli-slack` | [Slack](https://slack.com) | REST |
 
+## Prerequisites
+
+- [1Password](https://1password.com) — all API keys are stored in 1Password (never in config files)
+- [1Password CLI (`op`)](https://developer.1password.com/docs/cli/get-started/) — used to retrieve credentials at call time
+- The 1Password desktop app must be running and unlocked, with [CLI integration enabled](https://developer.1password.com/docs/cli/get-started/#turn-on-the-1password-desktop-app-integration)
+
 ## Install
 
 ```sh
