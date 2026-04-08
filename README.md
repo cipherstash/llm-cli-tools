@@ -48,7 +48,33 @@ api_username = "your-username"
 op_item_id = "your-1password-item-id"
 ```
 
-API keys are retrieved from 1Password at call time via the `op` CLI. Each config section requires an `op_item_id` pointing to a 1Password item. The key is read from the `credential` field by default; set `op_field` to use a different field.
+## Authentication
+
+API keys are never stored in config files. Instead, each tool retrieves credentials from [1Password](https://1password.com) at call time using the [`op` CLI](https://developer.1password.com/docs/cli/get-started/).
+
+Under the hood, each invocation runs:
+
+```sh
+op item get <op_item_id> --field <op_field> --reveal
+```
+
+### Setup
+
+1. **Install the 1Password CLI** — follow the [getting started guide](https://developer.1password.com/docs/cli/get-started/)
+2. **Create an API key** for the service (Linear, Discourse, or Slack)
+3. **Store it in 1Password** — create an item (e.g. type "API Credential" or "Login") and paste the key into a field named `credential`
+4. **Find the item ID** — open the item in 1Password.app and copy the ID from the URL bar (it looks like `a1b2c3d4e5f6g7h8`), or run:
+   ```sh
+   op item list | grep "Linear"
+   ```
+5. **Add the item ID to your config** as `op_item_id`
+
+### Config fields
+
+- `op_item_id` (required) — the 1Password item ID containing your API key
+- `op_field` (optional, default: `"credential"`) — the field name within the 1Password item to read the key from. Set this if you stored the key in a different field.
+
+The 1Password desktop app must be running and unlocked for `op` to work. If you use 1Password in the browser only, you'll need to [enable CLI integration](https://developer.1password.com/docs/cli/get-started/#turn-on-the-1password-desktop-app-integration).
 
 ## Usage
 
