@@ -6,7 +6,7 @@
 
 use std::io::Write;
 
-use crate::api::{Issue, IssueListResult};
+use crate::api::{Issue, IssueListResult, ReviewRequest, ReviewRequestListResult};
 use serde::Serialize;
 
 /// A structured error with code, message, and suggestion for recovery.
@@ -151,6 +151,41 @@ pub fn format_issue_list_human(result: &IssueListResult) -> String {
             }
             out.push_str(&format_issue_human(issue));
         }
+    }
+    if let Some(ref msg) = result.message {
+        out.push_str(&format!("\n> {msg}\n"));
+    }
+    out
+}
+
+/// Format a single review request as a markdown block.
+fn format_review_request_human(rr: &ReviewRequest) -> String {
+    let pr = &rr.pull_request;
+    let mut out = format!("## #{} — {}\n\n", pr.number, pr.title);
+    out.push_str(&format!("- **Status:** {}\n", pr.status));
+    if let Some(ref actor) = rr.requested_by {
+        out.push_str(&format!("- **Requested by:** {}\n", actor.name));
+    }
+    out.push_str(&format!("- **Requested at:** {}\n", rr.requested_at));
+    let source = pr.source_branch.as_deref().unwrap_or("?");
+    let target = pr.target_branch.as_deref().unwrap_or("?");
+    out.push_str(&format!("- **Branch:** {source} → {target}\n"));
+    out.push_str(&format!("- **URL:** {}\n", pr.url));
+    out
+}
+
+/// Format a list of review requests as markdown.
+pub fn format_review_request_list_human(result: &ReviewRequestListResult) -> String {
+    let mut out = String::new();
+    if result.review_requests.is_empty() {
+        out.push_str("No pending review requests.\n");
+    } else {
+        let blocks: Vec<String> = result
+            .review_requests
+            .iter()
+            .map(format_review_request_human)
+            .collect();
+        out.push_str(&blocks.join("\n---\n"));
     }
     if let Some(ref msg) = result.message {
         out.push_str(&format!("\n> {msg}\n"));
@@ -494,6 +529,111 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
         assert_eq!(parsed["pagination"]["has_more"], false);
         assert!(parsed["pagination"].get("next_cursor").is_none());
+    }
+
+    // ---- review-requests human formatting tests ----
+
+    fn sample_review_request() -> crate::api::ReviewRequest {
+        crate::api::ReviewRequest {
+            id: "n1".to_string(),
+            requested_at: "2026-06-01T00:00:00Z".to_string(),
+            read: false,
+            requested_by: Some(crate::api::ReviewRequestActor {
+                name: "Alice".to_string(),
+                email: Some("alice@example.com".to_string()),
+            }),
+            pull_request: crate::api::ReviewRequestPullRequest {
+                number: 42,
+                title: "Add feature".to_string(),
+                status: "open".to_string(),
+                url: "https://github.com/o/r/pull/42".to_string(),
+                source_branch: Some("feature".to_string()),
+                target_branch: Some("main".to_string()),
+            },
+        }
+    }
+
+    #[test]
+    fn format_review_request_list_human_empty() {
+        let result = crate::api::ReviewRequestListResult {
+            review_requests: vec![],
+            message: None,
+            has_more: false,
+            next_cursor: None,
+        };
+        let output = format_review_request_list_human(&result);
+        assert_eq!(output, "No pending review requests.\n");
+    }
+
+    #[test]
+    fn format_review_request_list_human_populated() {
+        let result = crate::api::ReviewRequestListResult {
+            review_requests: vec![sample_review_request()],
+            message: None,
+            has_more: false,
+            next_cursor: None,
+        };
+        let output = format_review_request_list_human(&result);
+        assert!(output.contains("#42"));
+        assert!(output.contains("Add feature"));
+        assert!(output.contains("open"));
+        assert!(output.contains("Alice"));
+        assert!(output.contains("2026-06-01T00:00:00Z"));
+        assert!(output.contains("feature"));
+        assert!(output.contains("main"));
+        assert!(output.contains("https://github.com/o/r/pull/42"));
+    }
+
+    #[test]
+    fn format_review_request_list_human_separates_multiple() {
+        let mut second = sample_review_request();
+        second.pull_request.number = 43;
+        let result = crate::api::ReviewRequestListResult {
+            review_requests: vec![sample_review_request(), second],
+            message: None,
+            has_more: false,
+            next_cursor: None,
+        };
+        let output = format_review_request_list_human(&result);
+        assert!(output.contains("\n---\n"));
+        assert!(output.contains("#42"));
+        assert!(output.contains("#43"));
+    }
+
+    #[test]
+    fn format_review_request_list_human_appends_truncation_blockquote() {
+        let result = crate::api::ReviewRequestListResult {
+            review_requests: vec![sample_review_request()],
+            message: Some("Results truncated to 25.".to_string()),
+            has_more: true,
+            next_cursor: Some("cursor-abc".to_string()),
+        };
+        let output = format_review_request_list_human(&result);
+        assert!(output.contains("> Results truncated to 25."));
+    }
+
+    #[test]
+    fn format_review_request_list_serializes_with_pagination() {
+        let result = crate::api::ReviewRequestListResult {
+            review_requests: vec![sample_review_request()],
+            message: Some("Results truncated to 25.".to_string()),
+            has_more: true,
+            next_cursor: Some("cursor-abc".to_string()),
+        };
+        let pagination = Pagination {
+            has_more: true,
+            next_cursor: Some("cursor-abc".to_string()),
+        };
+        let output = format_success_with_pagination(&result, Some(&pagination));
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(parsed["success"], true);
+        assert_eq!(
+            parsed["data"]["review_requests"][0]["pull_request"]["number"],
+            42
+        );
+        assert!(parsed["data"].get("has_more").is_none());
+        assert_eq!(parsed["pagination"]["has_more"], true);
+        assert_eq!(parsed["pagination"]["next_cursor"], "cursor-abc");
     }
 
     #[test]

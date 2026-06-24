@@ -428,6 +428,185 @@ pub fn parse_done_state_id(body: &Value) -> Result<(String, String), String> {
     Ok((issue_id, done_state_id))
 }
 
+/// The actor (PR author/requester) on a review-request notification.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewRequestActor {
+    pub name: String,
+    #[serde(default)]
+    pub email: Option<String>,
+}
+
+/// The pull request referenced by a review-request notification.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewRequestPullRequest {
+    /// PR number. Linear's GraphQL schema types this as a Float, but the values
+    /// are integral, so serde maps the JSON number directly to `u64`.
+    pub number: u64,
+    pub title: String,
+    pub status: String,
+    pub url: String,
+    #[serde(default, alias = "sourceBranch")]
+    pub source_branch: Option<String>,
+    #[serde(default, alias = "targetBranch")]
+    pub target_branch: Option<String>,
+}
+
+/// A pending PR review request, derived from a Linear notification.
+#[derive(Debug, Clone, Serialize)]
+pub struct ReviewRequest {
+    pub id: String,
+    pub requested_at: String,
+    pub read: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested_by: Option<ReviewRequestActor>,
+    pub pull_request: ReviewRequestPullRequest,
+}
+
+/// Intermediate shape for deserializing a PullRequestNotification node.
+#[derive(Debug, Deserialize)]
+struct PullRequestNotificationNode {
+    id: String,
+    #[serde(alias = "createdAt")]
+    created_at: String,
+    #[serde(default, alias = "readAt")]
+    read_at: Option<String>,
+    #[serde(default)]
+    actor: Option<ReviewRequestActor>,
+    #[serde(rename = "pullRequest")]
+    pull_request: ReviewRequestPullRequest,
+}
+
+/// Result of listing review requests, including truncation info.
+#[derive(Debug, Serialize)]
+pub struct ReviewRequestListResult {
+    pub review_requests: Vec<ReviewRequest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(skip)]
+    pub has_more: bool,
+    #[serde(skip)]
+    pub next_cursor: Option<String>,
+}
+
+/// Build the GraphQL query for listing pending PR review-request notifications.
+///
+/// `NotificationFilter` supports `type` (a StringComparator) but not `category`,
+/// so we filter server-side by `type eq pullRequestReviewRequested` and filter
+/// PR status client-side. `includeArchived: false` excludes notifications the
+/// user has already archived (dismissed), which are not pending review.
+pub fn build_review_requests_query(limit: u32, after: Option<&str>) -> GraphqlRequest {
+    let query = r#"query($first: Int!, $filter: NotificationFilter, $after: String) {
+  notifications(first: $first, filter: $filter, after: $after, includeArchived: false) {
+    nodes {
+      __typename
+      ... on PullRequestNotification {
+        id
+        type
+        createdAt
+        readAt
+        actor { name email }
+        pullRequest {
+          number
+          title
+          status
+          url
+          sourceBranch
+          targetBranch
+        }
+      }
+    }
+    pageInfo { hasNextPage endCursor }
+  }
+}"#
+    .to_string();
+
+    let variables = serde_json::json!({
+        "first": limit,
+        "filter": { "type": { "eq": "pullRequestReviewRequested" } },
+        "after": after,
+    });
+
+    GraphqlRequest {
+        query,
+        variables: Some(variables),
+    }
+}
+
+/// Whether a PR status counts as still awaiting review (not resolved).
+fn is_unresolved_pr_status(status: &str) -> bool {
+    matches!(status, "open" | "inReview" | "draft")
+}
+
+/// Parse the response from a review-requests notification query.
+///
+/// Skips non-PR notifications, optionally filters out resolved PRs, and dedupes
+/// by pull request URL, keeping the first occurrence in the order the API
+/// returned the nodes.
+pub fn parse_review_requests_response(
+    body: &Value,
+    limit: u32,
+    include_resolved: bool,
+) -> Result<ReviewRequestListResult, String> {
+    let nodes = body
+        .pointer("/data/notifications/nodes")
+        .and_then(|v| v.as_array())
+        .ok_or("Unexpected response: missing notifications.nodes")?;
+
+    let mut review_requests: Vec<ReviewRequest> = Vec::new();
+    let mut seen_urls: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for node in nodes {
+        // Defensively skip any node that isn't a PR notification (no pullRequest).
+        if node.get("pullRequest").is_none() {
+            continue;
+        }
+
+        let parsed: PullRequestNotificationNode = serde_json::from_value(node.clone())
+            .map_err(|e| format!("Failed to parse review request: {e}"))?;
+
+        if !include_resolved && !is_unresolved_pr_status(&parsed.pull_request.status) {
+            continue;
+        }
+
+        if !seen_urls.insert(parsed.pull_request.url.clone()) {
+            continue;
+        }
+
+        review_requests.push(ReviewRequest {
+            id: parsed.id,
+            requested_at: parsed.created_at,
+            read: parsed.read_at.is_some(),
+            requested_by: parsed.actor,
+            pull_request: parsed.pull_request,
+        });
+    }
+
+    let has_next_page = body
+        .pointer("/data/notifications/pageInfo/hasNextPage")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let end_cursor = body
+        .pointer("/data/notifications/pageInfo/endCursor")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let message = if has_next_page {
+        Some(format!(
+            "Results truncated to {limit}. Use --limit to fetch more, or pass --cursor with the next_cursor value to fetch the next page."
+        ))
+    } else {
+        None
+    };
+
+    Ok(ReviewRequestListResult {
+        review_requests,
+        message,
+        has_more: has_next_page,
+        next_cursor: if has_next_page { end_cursor } else { None },
+    })
+}
+
 /// Whether an HTTP status code is retryable (429 or 5xx).
 fn is_retryable_status(status: u16) -> bool {
     status == 429 || status >= 500
@@ -1147,6 +1326,258 @@ mod tests {
         assert!(req.query.contains("labels { nodes { name } }"));
         assert!(req.query.contains("createdAt"));
         assert!(req.query.contains("updatedAt"));
+    }
+
+    // ---- Review requests tests ----
+
+    #[test]
+    fn build_review_requests_query_structure() {
+        let req = build_review_requests_query(10, None);
+        assert!(req.query.contains("notifications(first: $first"));
+        assert!(req.query.contains("PullRequestNotification"));
+        assert!(req.query.contains("pullRequest"));
+        let vars = req.variables.unwrap();
+        assert_eq!(vars["first"], 10);
+        assert_eq!(vars["filter"]["type"]["eq"], "pullRequestReviewRequested");
+        assert!(vars["after"].is_null());
+    }
+
+    #[test]
+    fn build_review_requests_query_with_cursor() {
+        let req = build_review_requests_query(5, Some("cursor-xyz"));
+        assert!(req.query.contains("after: $after"));
+        assert!(req.query.contains("$after: String"));
+        let vars = req.variables.unwrap();
+        assert_eq!(vars["first"], 5);
+        assert_eq!(vars["after"], "cursor-xyz");
+    }
+
+    #[test]
+    fn build_review_requests_query_includes_pr_fields() {
+        let req = build_review_requests_query(10, None);
+        assert!(req.query.contains("number"));
+        assert!(req.query.contains("title"));
+        assert!(req.query.contains("status"));
+        assert!(req.query.contains("url"));
+        assert!(req.query.contains("sourceBranch"));
+        assert!(req.query.contains("targetBranch"));
+        assert!(req.query.contains("actor { name email }"));
+        assert!(req.query.contains("createdAt"));
+        assert!(req.query.contains("readAt"));
+        assert!(req.query.contains("endCursor"));
+    }
+
+    fn pr_notification_node(
+        id: &str,
+        status: &str,
+        url: &str,
+        read_at: Value,
+        number: u64,
+    ) -> Value {
+        serde_json::json!({
+            "__typename": "PullRequestNotification",
+            "id": id,
+            "type": "pullRequestReviewRequested",
+            "createdAt": "2026-06-01T00:00:00Z",
+            "readAt": read_at,
+            "actor": { "name": "Alice", "email": "alice@example.com" },
+            "pullRequest": {
+                "number": number,
+                "title": "Add feature",
+                "status": status,
+                "url": url,
+                "sourceBranch": "feature",
+                "targetBranch": "main"
+            }
+        })
+    }
+
+    #[test]
+    fn parse_review_requests_extracts_open_pr() {
+        let body = serde_json::json!({
+            "data": {
+                "notifications": {
+                    "nodes": [
+                        pr_notification_node(
+                            "n1", "open", "https://github.com/o/r/pull/1", Value::Null, 1
+                        )
+                    ],
+                    "pageInfo": { "hasNextPage": false }
+                }
+            }
+        });
+        let result = parse_review_requests_response(&body, 25, false).unwrap();
+        assert_eq!(result.review_requests.len(), 1);
+        let rr = &result.review_requests[0];
+        assert_eq!(rr.id, "n1");
+        assert_eq!(rr.requested_at, "2026-06-01T00:00:00Z");
+        assert!(!rr.read);
+        assert_eq!(rr.pull_request.number, 1);
+        assert_eq!(rr.pull_request.title, "Add feature");
+        assert_eq!(rr.pull_request.status, "open");
+        assert_eq!(rr.pull_request.source_branch.as_deref(), Some("feature"));
+        assert_eq!(rr.pull_request.target_branch.as_deref(), Some("main"));
+        let actor = rr.requested_by.as_ref().unwrap();
+        assert_eq!(actor.name, "Alice");
+        assert_eq!(actor.email.as_deref(), Some("alice@example.com"));
+    }
+
+    #[test]
+    fn parse_review_requests_read_derived_from_read_at() {
+        let body = serde_json::json!({
+            "data": {
+                "notifications": {
+                    "nodes": [
+                        pr_notification_node(
+                            "n1",
+                            "open",
+                            "https://github.com/o/r/pull/1",
+                            Value::String("2026-06-02T00:00:00Z".to_string()),
+                            1
+                        )
+                    ],
+                    "pageInfo": { "hasNextPage": false }
+                }
+            }
+        });
+        let result = parse_review_requests_response(&body, 25, false).unwrap();
+        assert!(result.review_requests[0].read);
+    }
+
+    #[test]
+    fn parse_review_requests_filters_resolved_by_default() {
+        let body = serde_json::json!({
+            "data": {
+                "notifications": {
+                    "nodes": [
+                        pr_notification_node("n1", "open", "https://github.com/o/r/pull/1", Value::Null, 1),
+                        pr_notification_node("n2", "merged", "https://github.com/o/r/pull/2", Value::Null, 2),
+                        pr_notification_node("n3", "closed", "https://github.com/o/r/pull/3", Value::Null, 3),
+                        pr_notification_node("n4", "approved", "https://github.com/o/r/pull/4", Value::Null, 4),
+                        pr_notification_node("n5", "inReview", "https://github.com/o/r/pull/5", Value::Null, 5),
+                        pr_notification_node("n6", "draft", "https://github.com/o/r/pull/6", Value::Null, 6)
+                    ],
+                    "pageInfo": { "hasNextPage": false }
+                }
+            }
+        });
+        let result = parse_review_requests_response(&body, 25, false).unwrap();
+        let statuses: Vec<&str> = result
+            .review_requests
+            .iter()
+            .map(|r| r.pull_request.status.as_str())
+            .collect();
+        assert_eq!(statuses, vec!["open", "inReview", "draft"]);
+    }
+
+    #[test]
+    fn parse_review_requests_include_resolved_keeps_all() {
+        let body = serde_json::json!({
+            "data": {
+                "notifications": {
+                    "nodes": [
+                        pr_notification_node("n1", "open", "https://github.com/o/r/pull/1", Value::Null, 1),
+                        pr_notification_node("n2", "merged", "https://github.com/o/r/pull/2", Value::Null, 2)
+                    ],
+                    "pageInfo": { "hasNextPage": false }
+                }
+            }
+        });
+        let result = parse_review_requests_response(&body, 25, true).unwrap();
+        assert_eq!(result.review_requests.len(), 2);
+    }
+
+    #[test]
+    fn parse_review_requests_dedupes_by_url() {
+        let body = serde_json::json!({
+            "data": {
+                "notifications": {
+                    "nodes": [
+                        pr_notification_node("n1", "open", "https://github.com/o/r/pull/1", Value::Null, 1),
+                        pr_notification_node("n2", "open", "https://github.com/o/r/pull/1", Value::Null, 1)
+                    ],
+                    "pageInfo": { "hasNextPage": false }
+                }
+            }
+        });
+        let result = parse_review_requests_response(&body, 25, false).unwrap();
+        assert_eq!(result.review_requests.len(), 1);
+        // Keeps the first occurrence in the order the API returned the nodes.
+        assert_eq!(result.review_requests[0].id, "n1");
+    }
+
+    #[test]
+    fn parse_review_requests_skips_node_missing_pull_request() {
+        let body = serde_json::json!({
+            "data": {
+                "notifications": {
+                    "nodes": [
+                        { "__typename": "IssueNotification", "id": "x1", "type": "issueAssignedToYou" },
+                        pr_notification_node("n1", "open", "https://github.com/o/r/pull/1", Value::Null, 1)
+                    ],
+                    "pageInfo": { "hasNextPage": false }
+                }
+            }
+        });
+        let result = parse_review_requests_response(&body, 25, false).unwrap();
+        assert_eq!(result.review_requests.len(), 1);
+        assert_eq!(result.review_requests[0].id, "n1");
+    }
+
+    #[test]
+    fn parse_review_requests_truncation_message_and_cursor() {
+        let body = serde_json::json!({
+            "data": {
+                "notifications": {
+                    "nodes": [],
+                    "pageInfo": { "hasNextPage": true, "endCursor": "cursor-abc" }
+                }
+            }
+        });
+        let result = parse_review_requests_response(&body, 25, false).unwrap();
+        assert!(result.has_more);
+        assert_eq!(result.next_cursor.as_deref(), Some("cursor-abc"));
+        assert!(result.message.unwrap().contains("truncated"));
+    }
+
+    #[test]
+    fn parse_review_requests_no_more_pages() {
+        let body = serde_json::json!({
+            "data": {
+                "notifications": {
+                    "nodes": [],
+                    "pageInfo": { "hasNextPage": false }
+                }
+            }
+        });
+        let result = parse_review_requests_response(&body, 25, false).unwrap();
+        assert!(!result.has_more);
+        assert!(result.next_cursor.is_none());
+        assert!(result.message.is_none());
+    }
+
+    #[test]
+    fn parse_review_requests_result_skips_pagination_in_serialization() {
+        let body = serde_json::json!({
+            "data": {
+                "notifications": {
+                    "nodes": [],
+                    "pageInfo": { "hasNextPage": true, "endCursor": "cursor-abc" }
+                }
+            }
+        });
+        let result = parse_review_requests_response(&body, 25, false).unwrap();
+        let serialized = serde_json::to_value(&result).unwrap();
+        assert!(serialized.get("has_more").is_none());
+        assert!(serialized.get("next_cursor").is_none());
+        assert!(serialized.get("review_requests").is_some());
+    }
+
+    #[test]
+    fn parse_review_requests_missing_nodes_errors() {
+        let body = serde_json::json!({ "data": {} });
+        let err = parse_review_requests_response(&body, 25, false).unwrap_err();
+        assert!(err.contains("notifications.nodes"));
     }
 
     // ---- Retry helper tests ----

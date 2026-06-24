@@ -1,6 +1,7 @@
 //! CLI argument parsing using clap derive.
 //!
-//! Subcommands: `issues list`, `issues get`, `issues create`, `issues close`.
+//! Subcommands: `issues list`, `issues get`, `issues create`, `issues close`,
+//! `review-requests`.
 //! Global flag: `--human` for human-readable output instead of JSON.
 
 use clap::{Parser, Subcommand};
@@ -68,6 +69,21 @@ pub enum Command {
     Issues {
         #[command(subcommand)]
         action: IssuesAction,
+    },
+    /// List pending PR review requests assigned to the authenticated user.
+    ///
+    /// Surfaces GitHub/GitLab pull requests awaiting your review, sourced from
+    /// Linear notifications (Linear has no native issue-reviewer concept).
+    ReviewRequests {
+        /// Maximum number of review requests to return.
+        #[arg(long, default_value = "25")]
+        limit: u32,
+        /// Pagination cursor from a previous response.
+        #[arg(long)]
+        cursor: Option<String>,
+        /// Include resolved PRs (merged/closed/approved) instead of only those still awaiting review.
+        #[arg(long)]
+        include_resolved: bool,
     },
     /// Generate shell completions.
     Completions {
@@ -451,6 +467,78 @@ mod tests {
     fn schema_subcommand_parses() {
         let cli = parse_args(&["schema"]).unwrap();
         assert!(matches!(cli.command, Command::Schema));
+    }
+
+    // ---- review-requests parsing tests ----
+
+    #[test]
+    fn review_requests_default_limit() {
+        let cli = parse_args(&["review-requests"]).unwrap();
+        match cli.command {
+            Command::ReviewRequests { limit, .. } => {
+                assert_eq!(limit, 25);
+            }
+            _ => panic!("Expected review-requests"),
+        }
+    }
+
+    #[test]
+    fn review_requests_custom_limit() {
+        let cli = parse_args(&["review-requests", "--limit", "10"]).unwrap();
+        match cli.command {
+            Command::ReviewRequests { limit, .. } => {
+                assert_eq!(limit, 10);
+            }
+            _ => panic!("Expected review-requests"),
+        }
+    }
+
+    #[test]
+    fn review_requests_with_cursor() {
+        let cli = parse_args(&["review-requests", "--cursor", "abc123"]).unwrap();
+        match cli.command {
+            Command::ReviewRequests { cursor, .. } => {
+                assert_eq!(cursor.as_deref(), Some("abc123"));
+            }
+            _ => panic!("Expected review-requests"),
+        }
+    }
+
+    #[test]
+    fn review_requests_without_cursor() {
+        let cli = parse_args(&["review-requests"]).unwrap();
+        match cli.command {
+            Command::ReviewRequests { cursor, .. } => {
+                assert!(cursor.is_none());
+            }
+            _ => panic!("Expected review-requests"),
+        }
+    }
+
+    #[test]
+    fn review_requests_include_resolved_true() {
+        let cli = parse_args(&["review-requests", "--include-resolved"]).unwrap();
+        match cli.command {
+            Command::ReviewRequests {
+                include_resolved, ..
+            } => {
+                assert!(include_resolved);
+            }
+            _ => panic!("Expected review-requests"),
+        }
+    }
+
+    #[test]
+    fn review_requests_include_resolved_false() {
+        let cli = parse_args(&["review-requests"]).unwrap();
+        match cli.command {
+            Command::ReviewRequests {
+                include_resolved, ..
+            } => {
+                assert!(!include_resolved);
+            }
+            _ => panic!("Expected review-requests"),
+        }
     }
 
     #[test]

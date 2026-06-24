@@ -182,7 +182,13 @@ fn build_args_schema(cmd: &clap::Command) -> serde_json::Map<String, serde_json:
             arg_obj.insert("required".to_string(), serde_json::json!(true));
         }
 
-        let flag_name = format!("--{id}");
+        // Prefer the arg's long flag (kebab-cased by clap) so the schema
+        // advertises the exact flag users type, e.g. `--include-resolved`
+        // rather than the underlying field id `include_resolved`.
+        let flag_name = match arg.get_long() {
+            Some(long) => format!("--{long}"),
+            None => format!("--{id}"),
+        };
         args_map.insert(flag_name, serde_json::Value::Object(arg_obj));
     }
     args_map
@@ -380,6 +386,34 @@ fn run(args: cli::Cli) -> Result<(), output::CliError> {
                 }
             }
         },
+        cli::Command::ReviewRequests {
+            limit,
+            cursor,
+            include_resolved,
+        } => {
+            let request = api::build_review_requests_query(limit, cursor.as_deref());
+            let response = api::execute(&cfg.api_url, &api_key, &request, debug.as_ref())
+                .map_err(|e| api_error_to_cli(e, human))?;
+            let result = api::parse_review_requests_response(&response, limit, include_resolved)
+                .map_err(|e| api_error_to_cli(e, human))?;
+
+            if human {
+                output::format_review_request_list_human(&result)
+            } else {
+                let pagination = if result.has_more {
+                    Some(output::Pagination {
+                        has_more: true,
+                        next_cursor: result.next_cursor.clone(),
+                    })
+                } else {
+                    None
+                };
+                format!(
+                    "{}\n",
+                    output::format_success_with_pagination(&result, pagination.as_ref())
+                )
+            }
+        }
         cli::Command::Completions { .. } | cli::Command::Schema => unreachable!(),
     };
 
@@ -418,6 +452,18 @@ mod tests {
         assert!(list.get("args").is_some());
         assert!(list["args"].get("--limit").is_some());
         assert!(list["args"].get("--mine").is_some());
+    }
+
+    #[test]
+    fn build_schema_contains_review_requests_command() {
+        let cmd = <cli::Cli as clap::CommandFactory>::command();
+        let schema = build_schema(&cmd);
+        let commands = schema.get("commands").unwrap();
+        let rr = commands.get("review-requests").unwrap();
+        let args = rr.get("args").unwrap();
+        assert!(args.get("--limit").is_some());
+        assert!(args.get("--cursor").is_some());
+        assert!(args.get("--include-resolved").is_some());
     }
 
     #[test]
